@@ -4,7 +4,7 @@ const path=require('path');
 const WebSocket=require('ws');
 
 const PORT=process.env.PORT||8080;
-const W=960,H=540,SIM_DT=1/30,SNAPSHOT_MS=80;
+const W=960,H=540,SIM_DT=1/60,SNAPSHOT_MS=33;
 let nextPlayerId=1,nextEnemyId=1;
 
 const players=new Map();
@@ -72,7 +72,7 @@ function snapshot(){
     type:'snapshot',wave:dungeon.wave,
     players:dungeonPlayers().map(p=>({id:p.id,nick:p.nick,x:p.x,y:p.y,hp:p.hp,alive:p.alive,ammo:p.ammo,reload:p.reload})),
     enemies:[...dungeon.enemies.values()].map(e=>({id:e.id,x:e.x,y:e.y,hp:e.hp,maxHp:e.maxHp,type:e.type})),
-    bullets:dungeon.bullets.map(b=>({x:b.x,y:b.y,team:b.team})),
+    bullets:dungeon.bullets.map(b=>({x:b.x,y:b.y,vx:b.vx,vy:b.vy,team:b.team})),
     pickups:dungeon.pickups
   };
 }
@@ -118,7 +118,7 @@ wss.on('connection',ws=>{
       let dx=Number(m.dx)||0,dy=Number(m.dy)||0;
       const l=Math.hypot(dx,dy)||1;dx/=l;dy/=l;
       p.ammo--;p.fireCd=.15;
-      dungeon.bullets.push({x:p.x,y:p.y,vx:dx*560,vy:dy*560,life:1.15,team:'p',owner:p.id,dmg:15});
+      dungeon.bullets.push({x:p.x,y:p.y,vx:dx*900,vy:dy*900,life:1.15,team:'p',owner:p.id,dmg:15});
       return;
     }
     if(m.type==='reload'&&p.zone==='dungeon'&&p.reload<=0&&p.ammo<8)p.reload=.72;
@@ -159,7 +159,7 @@ setInterval(()=>{
       if(d<135){e.x-=nx*e.speed*.55*SIM_DT;e.y-=ny*e.speed*.55*SIM_DT;}
       e.shoot-=SIM_DT;
       if(e.shoot<=0&&d<370){
-        dungeon.bullets.push({x:e.x,y:e.y,vx:nx*250,vy:ny*250,life:2,team:'e',owner:e.id,dmg:10});
+        dungeon.bullets.push({x:e.x,y:e.y,vx:nx*320,vy:ny*320,life:2,team:'e',owner:e.id,dmg:10});
         e.shoot=1+Math.random()*.9;
       }
     }
