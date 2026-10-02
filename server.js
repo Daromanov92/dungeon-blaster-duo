@@ -292,12 +292,11 @@ wss.on('connection',(ws,req)=>{
       return;
     }
 
-    if(m.type==='shoot'&&p.zone==='dungeon'&&p.alive&&p.fireCd<=0&&p.reload<=0){
+    if(m.type==='shoot'&&p.zone==='dungeon'&&p.alive&&p.fireCd<=0){
       const w=weaponOf(p);
-      if(p.ammo<=0){p.reload=w.reload;return;}
       let dx=Number(m.dx)||0,dy=Number(m.dy)||0;
       const len=Math.hypot(dx,dy)||1;dx/=len;dy/=len;
-      p.ammo--;p.fireCd=w.fireCd;
+      p.fireCd=w.fireCd;
       const shotId=nextShotId++;
       broadcast('dungeon',{type:'fire_fx',owner:p.id,weapon:p.profile.weapon,x:p.x,y:p.y,dx,dy,shotId});
 
@@ -320,10 +319,7 @@ wss.on('connection',(ws,req)=>{
       return;
     }
 
-    if(m.type==='reload'&&p.zone==='dungeon'&&p.reload<=0){
-      const w=weaponOf(p);if(p.ammo<w.mag)p.reload=w.reload;
-      return;
-    }
+    if(m.type==='reload'&&p.zone==='dungeon'){p.reload=0;return;}
     if(m.type==='respawn'&&p.zone==='dungeon'&&!p.alive){
       p.hp=60;p.alive=true;p.x=420;p.y=DUNGEON.h/2;p.ammo=weaponOf(p).mag;resetMotion(p);
       return;
@@ -357,7 +353,7 @@ function stepSimulation(){
     p.fireCd=Math.max(0,p.fireCd-SIM_DT);
     p.dashCd=Math.max(0,p.dashCd-SIM_DT);
     p.dashTime=Math.max(0,p.dashTime-SIM_DT);
-    if(p.reload>0){p.reload-=SIM_DT;if(p.reload<=0)p.ammo=weaponOf(p).mag;}
+    p.reload=0;p.ammo=weaponOf(p).mag;
     if(!p.alive){p.vx=0;p.vy=0;continue;}
 
     const world=p.zone==='lobby'?LOBBY:DUNGEON;
