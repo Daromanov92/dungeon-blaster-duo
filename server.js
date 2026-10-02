@@ -113,12 +113,16 @@ function spawnWave(){
       x=500+Math.random()*(DUNGEON.w-650);
       y=120+Math.random()*(DUNGEON.h-240);
     }while(x<950&&Math.abs(y-DUNGEON.h/2)<420);
-    const hp=30+dungeon.wave*6;
+    const roll=Math.random();
+    const type=roll<.22?'brain':(roll<.50?'shooter':'melee');
+    const hp=type==='brain'?(46+dungeon.wave*7):(30+dungeon.wave*6);
     dungeon.enemies.set(nextEnemyId,{
       id:nextEnemyId++,x,y,vx:0,vy:0,hp,maxHp:hp,
-      speed:52+dungeon.wave*1.6,
-      type:Math.random()<.32?'shooter':'melee',
-      shoot:.7+Math.random()*1.3
+      speed:type==='brain'?(68+dungeon.wave*1.2):(52+dungeon.wave*1.6),
+      type,
+      shoot:type==='brain'?(.65+Math.random()*.5):(.7+Math.random()*1.3),
+      phase:Math.random()*Math.PI*2,
+      orbitDir:Math.random()<.5?-1:1
     });
   }
 }
@@ -160,7 +164,8 @@ function playerPacket(p){
   ];
 }
 function enemyPacket(e){
-  return [e.id,Math.round(e.x),Math.round(e.y),Math.round(e.hp),e.maxHp,e.type==='shooter'?1:0,Math.round(e.vx),Math.round(e.vy)];
+  const typeCode=e.type==='shooter'?1:(e.type==='brain'?2:0);
+  return [e.id,Math.round(e.x),Math.round(e.y),Math.round(e.hp),e.maxHp,typeCode,Math.round(e.vx),Math.round(e.vy)];
 }
 function inAoi(p,x,y,r=AOI_RADIUS){
   const dx=x-p.x,dy=y-p.y;return dx*dx+dy*dy<=r*r;
@@ -172,7 +177,7 @@ function buildSnapshotFor(p,st){
   const enemies=[];
   for(const e of dungeon.enemies.values())if(inAoi(p,e.x,e.y))enemies.push(enemyPacket(e));
   const bullets=[];
-  for(const b of dungeon.bullets)if(b.team==='e'&&inAoi(p,b.x,b.y,AOI_RADIUS+250))bullets.push([b.id,Math.round(b.x),Math.round(b.y),Math.round(b.vx),Math.round(b.vy)]);
+  for(const b of dungeon.bullets)if(b.team==='e'&&inAoi(p,b.x,b.y,AOI_RADIUS+250))bullets.push([b.id,Math.round(b.x),Math.round(b.y),Math.round(b.vx),Math.round(b.vy),b.kind==='purpleOrb'?1:0]);
   const nearPickups=[];
   for(const pk of dungeon.pickups)if(inAoi(p,pk.x,pk.y))nearPickups.push([Math.round(pk.x),Math.round(pk.y),pk.type==='heal'?1:0]);
   return JSON.stringify({
@@ -383,6 +388,28 @@ function stepSimulation(){
     if(e.type==='melee'){
       if(d>26){e.vx=nx*e.speed;e.vy=ny*e.speed;}
       else damage(t,17*SIM_DT);
+    }else if(e.type==='brain'){
+      e.phase=(e.phase||0)+SIM_DT*2.2;
+      const tangentX=-ny*(e.orbitDir||1),tangentY=nx*(e.orbitDir||1);
+      if(d>430){e.vx=nx*e.speed;e.vy=ny*e.speed;}
+      else if(d<250){e.vx=-nx*e.speed*.85;e.vy=-ny*e.speed*.85;}
+      else{
+        const drift=.48+.12*Math.sin(e.phase);
+        e.vx=tangentX*e.speed*drift;
+        e.vy=tangentY*e.speed*drift;
+      }
+      e.shoot-=SIM_DT;
+      if(e.shoot<=0&&d<760){
+        const lead=.14;
+        const tx=t.x+(t.vx||0)*lead,ty=t.y+(t.vy||0)*lead;
+        const adx=tx-e.x,ady=ty-e.y,al=Math.hypot(adx,ady)||1;
+        dungeon.bullets.push({
+          id:nextBulletId++,x:e.x,y:e.y,
+          vx:adx/al*285,vy:ady/al*285,
+          life:3.6,team:'e',owner:e.id,dmg:13,kind:'purpleOrb'
+        });
+        e.shoot=1.0+Math.random()*.55;
+      }
     }else{
       if(d>260){e.vx=nx*e.speed*.70;e.vy=ny*e.speed*.70;}
       else if(d<180){e.vx=-nx*e.speed*.55;e.vy=-ny*e.speed*.55;}
@@ -392,7 +419,8 @@ function stepSimulation(){
         e.shoot=.9+Math.random()*1.1;
       }
     }
-    e.x+=e.vx*SIM_DT;e.y+=e.vy*SIM_DT;
+    e.x=Math.max(36,Math.min(DUNGEON.w-36,e.x+e.vx*SIM_DT));
+    e.y=Math.max(36,Math.min(DUNGEON.h-36,e.y+e.vy*SIM_DT));
   }
 
   for(const b of dungeon.bullets){
