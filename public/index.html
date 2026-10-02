@@ -24,7 +24,7 @@ button{margin-top:10px;border:0;background:#e0b449;color:#1a160d;font-weight:800
 <div id="hud"></div><div id="help">WASD — движение<br>ЛКМ — стрелять<br>R — перезарядка<br>Space — рывок</div><div id="toast"></div>
 
 <div id="choice"><div class="card"><h1>Три волны пройдены</h1><div class="sub">Вернуться в хаб или продолжить следующие 3 волны?</div><div class="choiceButtons"><button id="hubBtn" class="secondary">ВЕРНУТЬСЯ В ХАБ</button><button id="continueBtn">ПРОДОЛЖИТЬ</button></div></div></div>
-<div id="skinModal"><div class="card" style="width:min(720px,94vw)"><h1>Выбор меха</h1><div class="sub">Выберите внешний вид. Он сохранится в профиле этого ника.</div><div id="skinGrid" class="skinGrid"></div><button id="closeSkin" class="secondary">ЗАКРЫТЬ</button></div></div>
+<div id="skinModal"><div class="card" style="width:min(720px,94vw)"><h1>Выбор меха</h1><div class="sub">Выберите меха, затем нажмите «Применить скин».</div><div id="skinGrid" class="skinGrid"></div><button id="applySkin">ПРИМЕНИТЬ СКИН</button><button id="closeSkin" class="secondary">ЗАКРЫТЬ</button></div></div>
 
 <div id="login"><div class="card">
 <h1>Dungeon Blaster</h1>
@@ -38,14 +38,14 @@ button{margin-top:10px;border:0;background:#e0b449;color:#1a160d;font-weight:800
 const c=document.getElementById('game'),ctx=c.getContext('2d'),hud=document.getElementById('hud');
 const login=document.getElementById('login'),nick=document.getElementById('nick'),play=document.getElementById('play'),loginStatus=document.getElementById('loginStatus'),toast=document.getElementById('toast');
 const choice=document.getElementById('choice'),hubBtn=document.getElementById('hubBtn'),continueBtn=document.getElementById('continueBtn');
-const skinModal=document.getElementById('skinModal'),skinGrid=document.getElementById('skinGrid'),closeSkin=document.getElementById('closeSkin');
+const skinModal=document.getElementById('skinModal'),skinGrid=document.getElementById('skinGrid'),closeSkin=document.getElementById('closeSkin'),applySkin=document.getElementById('applySkin');
 ctx.imageSmoothingEnabled=false;
 
 const W=960,H=540,keys={},mouse={x:W/2,y:H/2,down:false};
 const SKINS=['mech_01.png','mech_02.png','mech_03.png','mech_04.png','mech_05.png','mech_06.png','mech_07.png','mech_08.png','mech_09.png','mech_10.png'];
 const skinImgs={};for(const s of SKINS){const im=new Image();im.src='/'+s;skinImgs[s]=im;}
 const SKIN_TABLE={x:420,y:235,w:120,h:70};
-let ws,myId=null,joined=false,zone='lobby',fireCd=0,last=performance.now(),choiceOpen=false,skinOpen=false,profile={level:1,xp:0,kills:0,coins:0,bestWave:1,skin:'mech_01.png'};
+let ws,myId=null,joined=false,zone='lobby',fireCd=0,last=performance.now(),choiceOpen=false,skinOpen=false,pendingSkin='mech_01.png',runClock=0,profile={level:1,xp:0,kills:0,coins:0,bestWave:1,skin:'mech_01.png'};
 let snap={players:[],enemies:[],bullets:[],pickups:[],wave:1,world:{w:960,h:540}};
 const smoothPlayers=new Map(),smoothEnemies=new Map();
 let localDraw={x:150,y:270,ready:false};
@@ -71,7 +71,7 @@ function saveProfile(){
 }
 function threshold(l){return 100+Math.max(0,l-1)*75;}
 function nearSkinTable(p){if(!p||zone!=='lobby')return false;const cx=SKIN_TABLE.x+SKIN_TABLE.w/2,cy=SKIN_TABLE.y+SKIN_TABLE.h/2;return Math.hypot(p.x-cx,p.y-cy)<95;}
-function rebuildSkinGrid(){skinGrid.innerHTML='';for(const s of SKINS){const b=document.createElement('button');b.className='skinBtn'+(profile.skin===s?' selected':'');const im=document.createElement('img');im.src='/'+s;im.alt=s;b.appendChild(im);b.onclick=()=>{profile.skin=s;saveProfile();if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'set_skin',skin:s}));skinOpen=false;skinModal.style.display='none';rebuildSkinGrid();};skinGrid.appendChild(b);}}
+function rebuildSkinGrid(){skinGrid.innerHTML='';for(const s of SKINS){const b=document.createElement('button');b.className='skinBtn'+(pendingSkin===s?' selected':'');const im=document.createElement('img');im.src='/'+s;im.alt=s;b.appendChild(im);b.onclick=()=>{pendingSkin=s;rebuildSkinGrid();};skinGrid.appendChild(b);}}
 
 function connect(){
   ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host);
@@ -83,9 +83,9 @@ function connect(){
   ws.onmessage=e=>{
     const m=JSON.parse(e.data);
     if(m.type==='joined'){
-      myId=m.id;joined=true;profile=m.profile||profile;saveProfile();login.style.display='none';note('Добро пожаловать');
+      myId=m.id;joined=true;profile=m.profile||profile;pendingSkin=profile.skin||'mech_01.png';saveProfile();login.style.display='none';note('Добро пожаловать');
     }
-    if(m.type==='profile_update'){profile=m.profile;saveProfile();rebuildSkinGrid();}
+    if(m.type==='profile_update'){profile=m.profile;pendingSkin=profile.skin||pendingSkin;saveProfile();rebuildSkinGrid();}
     if(m.type==='entered_dungeon'){zone='dungeon';localDraw.ready=false;smoothPlayers.clear();smoothEnemies.clear();note('Вы вошли в данж');}
     if(m.type==='back_to_hub'){zone='lobby';choiceOpen=false;choice.style.display='none';localDraw.ready=false;smoothPlayers.clear();smoothEnemies.clear();note('Вы вернулись в хаб');}
     if(m.type==='checkpoint_ready')note('3 волны пройдены — появилась дверь');
@@ -120,13 +120,21 @@ play.onclick=()=>{
 };
 nick.addEventListener('keydown',e=>{if(e.key==='Enter')play.click()});
 rebuildSkinGrid();
-closeSkin.onclick=()=>{skinOpen=false;skinModal.style.display='none';};
+applySkin.onclick=()=>{
+  if(!SKINS.includes(pendingSkin))return;
+  profile.skin=pendingSkin;saveProfile();
+  const local=me();if(local)local.skin=pendingSkin;
+  const sm=smoothPlayers.get(myId);if(sm&&sm.data)sm.data.skin=pendingSkin;
+  if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'set_skin',skin:pendingSkin}));
+  note('Скин применён');skinOpen=false;skinModal.style.display='none';
+};
+closeSkin.onclick=()=>{pendingSkin=profile.skin||'mech_01.png';skinOpen=false;skinModal.style.display='none';rebuildSkinGrid();};
 hubBtn.onclick=()=>{if(ws&&ws.readyState===1){ws.send(JSON.stringify({type:'checkpoint_action',action:'hub'}));choiceOpen=false;choice.style.display='none';}};
 continueBtn.onclick=()=>{if(ws&&ws.readyState===1){ws.send(JSON.stringify({type:'checkpoint_action',action:'continue'}));choiceOpen=false;choice.style.display='none';}};
 
 addEventListener('keydown',e=>{
   keys[e.code]=true;
-  if(e.code==='KeyE'&&zone==='lobby'&&!skinOpen){const p=me();if(nearSkinTable(p)){skinOpen=true;skinModal.style.display='grid';rebuildSkinGrid();}}
+  if(e.code==='KeyE'&&zone==='lobby'&&!skinOpen){const p=me();if(nearSkinTable(p)){pendingSkin=profile.skin||'mech_01.png';skinOpen=true;skinModal.style.display='grid';rebuildSkinGrid();}}
   if(e.code==='Escape'&&skinOpen){skinOpen=false;skinModal.style.display='none';}
   if(e.code==='KeyR'&&zone==='dungeon'&&ws&&ws.readyState===1)ws.send(JSON.stringify({type:'reload'}));
 });
@@ -152,9 +160,14 @@ setInterval(()=>{
 function sx(x){return x-camera.x}function sy(y){return y-camera.y}
 function drawPlayer(p,isMe,x,y){
   const X=sx(x),Y=sy(y),skin=p.skin||'mech_01.png',img=skinImgs[skin];
-  if(img&&img.complete&&img.naturalWidth){ctx.drawImage(img,Math.round(X-24),Math.round(Y-31),48,58);}else{const col=isMe?'#eeeef3':'#63c9ff';rect(X-11,Y-11,22,22,col);}
-  ctx.fillStyle='#fff';ctx.font='12px Arial';ctx.textAlign='center';ctx.fillText(p.nick+'  Lv.'+p.level,X,Y-38);
-  rect(X-14,Y+30,28,3,'#472327');rect(X-14,Y+30,28*(p.hp/100),3,'#62d26f');
+  const localMoving=isMe&&((keys.KeyW||keys.KeyA||keys.KeyS||keys.KeyD)&&!choiceOpen&&!skinOpen);
+  const moving=localMoving||(!isMe&&p.moving);
+  const bob=moving?Math.sin(runClock*18)*1.5:0;
+  const squeeze=moving?Math.round(Math.sin(runClock*18))*2:0;
+  const dw=48,dh=58-squeeze,dy=-31+(58-dh)+bob;
+  if(img&&img.complete&&img.naturalWidth){ctx.drawImage(img,Math.round(X-dw/2),Math.round(Y+dy),dw,dh);}else{const col=isMe?'#eeeef3':'#63c9ff';rect(X-11,Y-11+bob,22,22-squeeze,col);}
+  ctx.fillStyle='#fff';ctx.font='12px Arial';ctx.textAlign='center';ctx.fillText(p.nick+'  Lv.'+p.level,X,Y-38+bob);
+  rect(X-14,Y+30+bob,28,3,'#472327');rect(X-14,Y+30+bob,28*(p.hp/100),3,'#62d26f');
 }
 function updateCamera(dt){
   const p=me();if(!p)return;
@@ -234,6 +247,6 @@ function draw(dt){
     (zone==='dungeon'?'<br>Волна: '+snap.wave+' · HP '+Math.ceil(p.hp)+'/100 · Патроны '+p.ammo+'/8'+(snap.checkpoint?'<br><span style="color:#e0b449">Открылась дверь выхода</span>':''):'<br><span style="color:#e0b449">Идите к двери справа →</span>'+(nearSkinTable(p)?'<br><span style="color:#8bd6ff">E — выбрать меха</span>':'')):
     '';
 }
-function loop(t){const dt=Math.min(.033,(t-last)/1000);last=t;fireCd=Math.max(0,fireCd-dt);draw(dt);requestAnimationFrame(loop)}
+function loop(t){const dt=Math.min(.033,(t-last)/1000);last=t;runClock+=dt;fireCd=Math.max(0,fireCd-dt);draw(dt);requestAnimationFrame(loop)}
 requestAnimationFrame(loop);
 </script></body></html>
