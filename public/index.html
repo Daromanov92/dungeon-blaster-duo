@@ -44,6 +44,7 @@ const W=960,H=540,keys={},mouse={x:W/2,y:H/2,down:false};
 let ws,myId=null,joined=false,inDungeon=false,fireCd=0,last=performance.now();
 let snap={players:[],enemies:[],bullets:[],pickups:[],wave:1};
 const smoothPlayers=new Map(),smoothEnemies=new Map();
+let localDraw={x:W/2,y:H/2,ready:false};
 
 function rect(x,y,w,h,col){ctx.fillStyle=col;ctx.fillRect(Math.round(x),Math.round(y),Math.round(w),Math.round(h))}
 function norm(x,y){const l=Math.hypot(x,y)||1;return[x/l,y/l]}
@@ -82,6 +83,7 @@ function connect(){
       for(const p of m.players){
         const s=smoothPlayers.get(p.id)||{x:p.x,y:p.y};
         s.tx=p.x;s.ty=p.y;s.data=p;smoothPlayers.set(p.id,s);
+        if(p.id===myId&&!localDraw.ready){localDraw.x=p.x;localDraw.y=p.y;localDraw.ready=true;}
       }
       for(const e of m.enemies){
         const s=smoothEnemies.get(e.id)||{x:e.x,y:e.y};
@@ -118,7 +120,7 @@ setInterval(()=>{
   if(!inDungeon||!ws||ws.readyState!==1)return;
   const dx=(keys.KeyD?1:0)-(keys.KeyA?1:0),dy=(keys.KeyS?1:0)-(keys.KeyW?1:0);
   ws.send(JSON.stringify({type:'input',dx,dy,dash:!!keys.Space}));
-},50);
+},16);
 
 setInterval(()=>{
   if(!inDungeon||!mouse.down||fireCd>0||!ws||ws.readyState!==1)return;
@@ -134,22 +136,35 @@ function drawPlayer(p,isMe,x,y){
   ctx.fillStyle='#fff';ctx.font='12px Arial';ctx.textAlign='center';ctx.fillText(p.nick,x,y-18);
   rect(x-14,y+16,28,3,'#472327');rect(x-14,y+16,28*(p.hp/100),3,'#62d26f');
 }
-function draw(){
+function draw(dt){
   rect(0,0,W,H,'#17171d');
   for(let y=28;y<H-28;y+=32)for(let x=28;x<W-28;x+=32)rect(x,y,31,31,((x+y)/32)%2?'#202028':'#1d1d25');
   rect(0,0,W,26,'#494956');rect(0,H-26,W,26,'#494956');rect(0,0,26,H,'#494956');rect(W-26,0,26,H,'#494956');
 
   if(inDungeon){
+    const enemyBlend=1-Math.exp(-18*dt),playerBlend=1-Math.exp(-24*dt);
     for(const s of smoothEnemies.values()){
-      s.x=lerp(s.x,s.tx??s.x,.30);s.y=lerp(s.y,s.ty??s.y,.30);
+      s.x=lerp(s.x,s.tx??s.x,enemyBlend);s.y=lerp(s.y,s.ty??s.y,enemyBlend);
       const e=s.data;if(!e)continue;
       rect(s.x-10,s.y-10,20,20,e.type==='melee'?'#c84e54':'#8d66d9');
       rect(s.x-9,s.y-16,18,3,'#402126');rect(s.x-9,s.y-16,18*(e.hp/e.maxHp),3,'#f05b63');
     }
     for(const pk of snap.pickups||[])rect(pk.x-6,pk.y-6,12,12,pk.type==='heal'?'#74df7d':'#71d4ff');
     for(const s of smoothPlayers.values()){
-      s.x=lerp(s.x,s.tx??s.x,.36);s.y=lerp(s.y,s.ty??s.y,.36);
-      if(s.data)drawPlayer(s.data,s.data.id===myId,s.x,s.y);
+      if(s.data&&s.data.id===myId){
+        const dx=(keys.KeyD?1:0)-(keys.KeyA?1:0),dy=(keys.KeyS?1:0)-(keys.KeyW?1:0),l=Math.hypot(dx,dy)||1;
+        if(localDraw.ready){
+          const sp=keys.Space?440:195;
+          if(dx||dy){localDraw.x+=dx/l*sp*dt;localDraw.y+=dy/l*sp*dt;}
+          localDraw.x=Math.max(32,Math.min(W-32,localDraw.x));localDraw.y=Math.max(32,Math.min(H-32,localDraw.y));
+          const reconcile=1-Math.exp(-7*dt);
+          localDraw.x=lerp(localDraw.x,s.tx??localDraw.x,reconcile);localDraw.y=lerp(localDraw.y,s.ty??localDraw.y,reconcile);
+          drawPlayer(s.data,true,localDraw.x,localDraw.y);
+        }
+      }else{
+        s.x=lerp(s.x,s.tx??s.x,playerBlend);s.y=lerp(s.y,s.ty??s.y,playerBlend);
+        if(s.data)drawPlayer(s.data,false,s.x,s.y);
+      }
     }
     for(const b of snap.bullets||[])rect(b.x-3,b.y-3,6,6,b.team==='p'?'#ffd65c':'#ff6767');
     const p=me();
@@ -157,7 +172,7 @@ function draw(){
   }
 }
 function loop(t){
-  const dt=Math.min(.04,(t-last)/1000);last=t;fireCd=Math.max(0,fireCd-dt);draw();requestAnimationFrame(loop);
+  const dt=Math.min(.033,(t-last)/1000);last=t;fireCd=Math.max(0,fireCd-dt);draw(dt);requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
 </script></body></html>
