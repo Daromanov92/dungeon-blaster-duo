@@ -11,7 +11,7 @@ const SIM_DT=1/60,SNAPSHOT_MS=33;
 
 let nextPlayerId=1,nextEnemyId=1;
 const players=new Map();
-const dungeon={wave:1,enemies:new Map(),bullets:[],pickups:[]};
+const dungeon={wave:1,enemies:new Map(),bullets:[],pickups:[],checkpoint:false,checkpointDoor:{x:2360,y:1260,w:80,h:180}};
 
 const server=http.createServer((req,res)=>{
   let u=req.url.split('?')[0];
@@ -67,6 +67,7 @@ function resetLobby(p){
   p.y=220+Math.floor(n/4)*54;
   p.hp=100;p.alive=true;p.ammo=8;p.reload=0;p.fireCd=0;p.dashCd=0;
   p.input={dx:0,dy:0,dash:false};
+  p.atCheckpointPrompt=false;
 }
 function resetDungeon(p){
   p.zone='dungeon';
@@ -113,6 +114,11 @@ function insideDoor(p){
   const d=LOBBY.door;
   return p.x>d.x-10&&p.x<d.x+d.w+10&&p.y>d.y-10&&p.y<d.y+d.h+10;
 }
+function insideCheckpointDoor(p){
+  if(!dungeon.checkpoint)return false;
+  const d=dungeon.checkpointDoor;
+  return p.x>d.x-12&&p.x<d.x+d.w+12&&p.y>d.y-12&&p.y<d.y+d.h+12;
+}
 function playerView(p){
   return {id:p.id,nick:p.nick,x:p.x,y:p.y,hp:p.hp,alive:p.alive,ammo:p.ammo,reload:p.reload,level:p.profile.level};
 }
@@ -129,7 +135,8 @@ function snapshotFor(p){
     players:zonePlayers('dungeon').map(playerView),
     enemies:[...dungeon.enemies.values()].map(e=>({id:e.id,x:e.x,y:e.y,hp:e.hp,maxHp:e.maxHp,type:e.type})),
     bullets:dungeon.bullets.map(b=>({x:b.x,y:b.y,vx:b.vx,vy:b.vy,team:b.team})),
-    pickups:dungeon.pickups,wave:dungeon.wave
+    pickups:dungeon.pickups,wave:dungeon.wave,
+    checkpoint:dungeon.checkpoint,checkpointDoor:dungeon.checkpoint?dungeon.checkpointDoor:null
   };
 }
 
@@ -145,7 +152,7 @@ wss.on('connection',ws=>{
         id:nextPlayerId++,nick,ws,
         profile:cleanProfile(m.profile),
         zone:'lobby',x:150,y:270,hp:100,alive:true,ammo:8,reload:0,fireCd:0,dashCd:0,
-        input:{dx:0,dy:0,dash:false}
+        input:{dx:0,dy:0,dash:false},atCheckpointPrompt:false
       };
       resetLobby(p);
       players.set(p.id,p);
@@ -172,6 +179,23 @@ wss.on('connection',ws=>{
     if(m.type==='reload'&&p.zone==='dungeon'&&p.reload<=0&&p.ammo<8)p.reload=.72;
     if(m.type==='respawn'&&p.zone==='dungeon'&&!p.alive){p.hp=60;p.alive=true;p.x=420;p.y=DUNGEON.h/2;}
     if(m.type==='return_lobby')resetLobby(p);
+    if(m.type==='checkpoint_action'){
+      if(m.action==='hub'){
+        p.atCheckpointPrompt=false;
+        resetLobby(p);
+        send(p.ws,{type:'back_to_hub'});
+      }else if(m.action==='continue'&&dungeon.checkpoint){
+        dungeon.checkpoint=false;
+        dungeon.wave++;
+        for(const q of zonePlayers('dungeon')){
+          q.atCheckpointPrompt=false;
+          q.hp=Math.min(100,q.hp+20);
+          send(q.ws,{type:'checkpoint_closed'});
+          send(q.ws,{type:'wave',wave:dungeon.wave});
+        }
+        spawnWave();
+      }
+    }
   });
 
   ws.on('close',()=>{if(p)players.delete(p.id);});
@@ -193,6 +217,15 @@ setInterval(()=>{
     if(p.zone==='lobby'&&insideDoor(p)){
       resetDungeon(p);
       send(p.ws,{type:'entered_dungeon',wave:dungeon.wave});
+    }
+    if(p.zone==='dungeon'&&dungeon.checkpoint){
+      if(insideCheckpointDoor(p)&&!p.atCheckpointPrompt){
+        p.atCheckpointPrompt=true;
+        p.input={dx:0,dy:0,dash:false};
+        send(p.ws,{type:'checkpoint_choice',wave:dungeon.wave});
+      }else if(!insideCheckpointDoor(p)&&p.atCheckpointPrompt){
+        p.atCheckpointPrompt=false;
+      }
     }
   }
 
@@ -251,11 +284,19 @@ setInterval(()=>{
     if(taken)dungeon.pickups.splice(i,1);
   }
 
-  if(dungeon.enemies.size===0){
-    dungeon.wave++;
-    for(const p of active){if(p.alive)p.hp=Math.min(100,p.hp+15);awardWave(p,dungeon.wave);}
-    spawnWave();
-    for(const p of active)send(p.ws,{type:'wave',wave:dungeon.wave});
+  if(dungeon.enemies.size===0&&!dungeon.checkpoint){
+    const clearedWave=dungeon.wave;
+    for(const p of active){if(p.alive)p.hp=Math.min(100,p.hp+15);awardWave(p,clearedWave);}
+    if(clearedWave%3===0){
+      dungeon.checkpoint=true;
+      dungeon.bullets=[];
+      dungeon.pickups=[];
+      for(const p of active)send(p.ws,{type:'checkpoint_ready',wave:clearedWave});
+    }else{
+      dungeon.wave++;
+      spawnWave();
+      for(const p of active)send(p.ws,{type:'wave',wave:dungeon.wave});
+    }
   }
 },1000*SIM_DT);
 
