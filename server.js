@@ -2,6 +2,7 @@ const http=require('http');
 const fs=require('fs');
 const path=require('path');
 const WebSocket=require('ws');
+const {performance}=require('perf_hooks');
 
 const PORT=process.env.PORT||8080;
 const LOBBY={w:960,h:540,door:{x:865,y:190,w:55,h:160}};
@@ -197,6 +198,7 @@ function explodeGrenade(b){
 
 wss.on('connection',ws=>{
   ws._alive=true;
+  if(ws._socket){try{ws._socket.setNoDelay(true);ws._socket.setKeepAlive(true,10000);}catch{}}
   ws.on('pong',()=>ws._alive=true);
   let p=null;
 
@@ -313,7 +315,7 @@ wss.on('connection',ws=>{
   ws.on('error',()=>{});
 });
 
-setInterval(()=>{
+function stepSimulation(){
   for(const p of players.values()){
     p.fireCd=Math.max(0,p.fireCd-SIM_DT);
     p.dashCd=Math.max(0,p.dashCd-SIM_DT);
@@ -409,7 +411,18 @@ setInterval(()=>{
       for(const p of active)send(p.ws,{type:'wave',wave:dungeon.wave});
     }
   }
-},1000*SIM_DT);
+}
+let simLast=performance.now(),simAcc=0;
+function pumpSimulation(){
+  const now=performance.now();
+  simAcc+=Math.min(.1,(now-simLast)/1000);
+  simLast=now;
+  let steps=0;
+  while(simAcc>=SIM_DT&&steps<5){stepSimulation();simAcc-=SIM_DT;steps++;}
+  if(steps===5&&simAcc>SIM_DT*5)simAcc=SIM_DT*2;
+  setTimeout(pumpSimulation,4);
+}
+pumpSimulation();
 
 // Profile traffic is intentionally batched: kill streaks no longer create a burst of JSON messages.
 setInterval(()=>{
