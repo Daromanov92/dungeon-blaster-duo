@@ -37,7 +37,8 @@ function cleanProfile(raw){
     xp:Math.max(0,Number(r.xp)||0),
     kills:Math.max(0,Number(r.kills)||0),
     coins:Math.max(0,Number(r.coins)||0),
-    bestWave:Math.max(1,Number(r.bestWave)||1)
+    bestWave:Math.max(1,Number(r.bestWave)||1),
+    skin:/^mech_(0[1-9]|10)\\.png$/.test(String(r.skin||''))?String(r.skin):'mech_01.png'
   };
 }
 function profileThreshold(level){return 100+Math.max(0,level-1)*75;}
@@ -120,7 +121,7 @@ function insideCheckpointDoor(p){
   return p.x>d.x-12&&p.x<d.x+d.w+12&&p.y>d.y-12&&p.y<d.y+d.h+12;
 }
 function playerView(p){
-  return {id:p.id,nick:p.nick,x:p.x,y:p.y,hp:p.hp,alive:p.alive,ammo:p.ammo,reload:p.reload,level:p.profile.level};
+  return {id:p.id,nick:p.nick,x:p.x,y:p.y,hp:p.hp,alive:p.alive,ammo:p.ammo,reload:p.reload,level:p.profile.level,skin:p.profile.skin};
 }
 function snapshotFor(p){
   if(p.zone==='lobby'){
@@ -160,6 +161,15 @@ wss.on('connection',ws=>{
       return;
     }
     if(!p)return;
+
+    if(m.type==='set_skin'){
+      const skin=String(m.skin||'');
+      if(/^mech_(0[1-9]|10)\\.png$/.test(skin)){
+        p.profile.skin=skin;
+        send(p.ws,{type:'profile_update',profile:p.profile});
+      }
+      return;
+    }
 
     if(m.type==='input'&&p.alive){
       let dx=Number(m.dx)||0,dy=Number(m.dy)||0;
