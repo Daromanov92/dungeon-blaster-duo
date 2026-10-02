@@ -23,7 +23,7 @@ button{margin-top:10px;border:0;background:#e0b449;color:#1a160d;font-weight:800
 .netGood{color:#7ee787}.netWarn{color:#e0b449}.netBad{color:#ff7272}
 </style></head><body>
 <canvas id="game" width="960" height="540"></canvas>
-<div id="hud"></div><div id="help">WASD — движение<br>ЛКМ — стрелять<br>R — перезарядка<br>Space — рывок<br>E — взаимодействие</div><div id="toast"></div>
+<div id="hud"></div><div id="help">WASD — движение<br>ЛКМ — стрелять<br>Space — рывок<br>E — взаимодействие</div><div id="toast"></div>
 
 <div id="choice"><div class="card"><h1>Три волны пройдены</h1><div class="sub">Вернуться в хаб или продолжить следующие 3 волны?</div><div class="choiceButtons"><button id="hubBtn" class="secondary">ВЕРНУТЬСЯ В ХАБ</button><button id="continueBtn">ПРОДОЛЖИТЬ</button></div></div></div>
 <div id="skinModal"><div class="card" style="width:min(720px,94vw);max-height:90vh;overflow:auto"><h1>Выбор меха</h1><div class="sub">Выберите меха, затем подтвердите выбор.</div><button id="applySkin">ПРИМЕНИТЬ СКИН</button><div id="skinGrid" class="skinGrid"></div><button id="closeSkin" class="secondary">ЗАКРЫТЬ</button></div></div>
@@ -51,10 +51,10 @@ const DUNGEON={w:4800,h:2700,checkpointDoor:{x:2360,y:1260,w:80,h:180}};
 const SKINS=['mech_01.png','mech_02.png','mech_03.png','mech_04.png','mech_05.png','mech_06.png','mech_07.png','mech_08.png','mech_09.png','mech_10.png'];
 const WEAPON_IDS=['auto','rail','shotgun','grenade'];
 const WEAPON_INFO={
-  auto:{name:'Автомат',mag:30,fireCd:.075,speed:4500,life:.55,desc:'30 патронов · высокая скорострельность · скорость пули ×5'},
-  rail:{name:'Рельсотрон',mag:5,fireCd:1,range:1800,desc:'90 урона · 1 выстрел/сек · мгновенный пробивающий луч'},
-  shotgun:{name:'Дробовик',mag:8,fireCd:.62,speed:1100,life:.72,pellets:7,spread:.18,desc:'7 дробин · высокий урон вблизи · широкий разброс'},
-  grenade:{name:'Гранатомёт',mag:4,fireCd:.9,speed:650,life:1.15,desc:'взрыв по площади · радиус 115 · 4 гранаты'}
+  auto:{name:'Автомат',mag:30,fireCd:.075,speed:4500,life:.55,desc:'бесконечные патроны · высокая скорострельность · скорость пули ×5'},
+  rail:{name:'Рельсотрон',mag:5,fireCd:1,range:1800,desc:'бесконечные заряды · 90 урона · 1 выстрел/сек · пробивающий луч'},
+  shotgun:{name:'Дробовик',mag:8,fireCd:.62,speed:1100,life:.72,pellets:7,spread:.18,desc:'бесконечные патроны · 7 дробин · высокий урон вблизи'},
+  grenade:{name:'Гранатомёт',mag:4,fireCd:.9,speed:650,life:1.15,desc:'бесконечные гранаты · взрыв по площади · радиус 115'}
 };
 const SKIN_TABLE={x:420,y:235,w:120,h:70},WEAPON_TABLE={x:610,y:235,w:140,h:70};
 const skinImgs={};for(const s of SKINS){const im=new Image();im.src='/'+s;skinImgs[s]=im;}
@@ -297,7 +297,7 @@ addEventListener('keydown',e=>{
   }
   if(e.code==='Escape'&&skinOpen){skinOpen=false;skinModal.style.display='none'}
   if(e.code==='Escape'&&weaponOpen){weaponOpen=false;weaponModal.style.display='none'}
-  if(e.code==='KeyR'&&zone==='dungeon')netSend({type:'reload'},true);
+
 });
 addEventListener('keyup',e=>keys[e.code]=false);
 c.addEventListener('mousemove',e=>{const r=c.getBoundingClientRect();mouse.x=(e.clientX-r.left)*W/r.width;mouse.y=(e.clientY-r.top)*H/r.height});
@@ -338,7 +338,7 @@ function spawnFireFx(owner,weapon,x,y,dx,dy,shotId){
 function spawnExplosion(x,y,r){fxExplosions.push({x,y,r,life:.26,max:.26})}
 function tryShoot(){
   if(!joined||zone!=='dungeon'||blocked()||!mouse.down||fireCd>0)return;
-  const p=me();if(!p||!p.alive||p.reload>0||p.ammo<=0)return;
+  const p=me();if(!p||!p.alive)return;
   const wx=mouse.x+camera.x,wy=mouse.y+camera.y;
   const ox=localDraw.ready?localDraw.x:p.x,oy=localDraw.ready?localDraw.y:p.y;
   const d=norm(wx-ox,wy-oy),weapon=profile.weapon||p.weapon||'auto';
@@ -494,7 +494,7 @@ function updateHud(){
   const stateCls=net.stateConnected&&stateAge<250?'netGood':stateAge<600?'netWarn':'netBad';
   const w=WEAPON_INFO[p.weapon||profile.weapon]||WEAPON_INFO.auto;
   let extra=zone==='dungeon'
-    ?'<br>Волна: '+wave+' · HP '+Math.ceil(p.hp)+'/100 · '+w.name+' · Патроны '+p.ammo+'/'+p.mag+(checkpoint?'<br><span style="color:#e0b449">Открылась дверь выхода</span>':'')
+    ?'<br>Волна: '+wave+' · HP '+Math.ceil(p.hp)+'/100 · '+w.name+' · Патроны ∞'+(checkpoint?'<br><span style="color:#e0b449">Открылась дверь выхода</span>':'')
     :'<br><span style="color:#e0b449">Идите к двери справа →</span>'+(nearSkinTable(p)?'<br><span style="color:#8bd6ff">E — выбрать меха</span>':'')+(nearWeaponTable(p)?'<br><span style="color:#9eeaff">E — выбрать оружие</span>':'');
   hud.innerHTML='Профиль: '+esc(p.nick)+'<br>Уровень: '+profile.level+' ('+Math.floor(profile.xp)+'/'+xpThreshold(profile.level)+' XP)<br>Убийства: '+profile.kills+' · Монеты: '+profile.coins+
     extra+'<br><span class="'+cls+'">CTRL '+ping+' ms · Jitter '+jit+' ms</span> · <span class="'+stateCls+'">STATE '+stateAge+' ms · J '+stateJit+' ms</span><br>'+Math.round(net.snapHz)+' state/s · '+Math.round(net.fps)+' FPS';
