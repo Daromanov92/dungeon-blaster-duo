@@ -38,7 +38,7 @@ function cleanProfile(raw){
     kills:Math.max(0,Number(r.kills)||0),
     coins:Math.max(0,Number(r.coins)||0),
     bestWave:Math.max(1,Number(r.bestWave)||1),
-    skin:/^mech_(0[1-9]|10)\\.png$/.test(String(r.skin||''))?String(r.skin):'mech_01.png'
+    skin:/^mech_(0[1-9]|10)\.png$/.test(String(r.skin||''))?String(r.skin):'mech_01.png'
   };
 }
 function profileThreshold(level){return 100+Math.max(0,level-1)*75;}
@@ -164,7 +164,7 @@ wss.on('connection',ws=>{
 
     if(m.type==='set_skin'){
       const skin=String(m.skin||'');
-      if(/^mech_(0[1-9]|10)\\.png$/.test(skin)){
+      if(/^mech_(0[1-9]|10)\.png$/.test(skin)){
         p.profile.skin=skin;
         send(p.ws,{type:'profile_update',profile:p.profile});
       }
