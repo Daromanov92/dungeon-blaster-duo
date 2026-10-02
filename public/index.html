@@ -58,6 +58,8 @@ const WEAPON_INFO={
 };
 const SKIN_TABLE={x:420,y:235,w:120,h:70},WEAPON_TABLE={x:610,y:235,w:140,h:70};
 const skinImgs={};for(const s of SKINS){const im=new Image();im.src='/'+s;skinImgs[s]=im;}
+const brainEnemyImg=new Image();brainEnemyImg.src='/brain_jelly_enemy.png';
+const purpleProjectileImg=new Image();purpleProjectileImg.src='/purple_projectile.png';
 
 const keys={},mouse={x:W/2,y:H/2,down:false};
 let ws=null,stateWs=null,stateToken='',stateReconnectTimer=null,myId=null,joined=false,zone='lobby',choiceOpen=false,skinOpen=false,weaponOpen=false;
@@ -118,7 +120,7 @@ function rebuildWeaponGrid(){
 function decodePlayer(a){
   return {id:a[0],nick:a[1],x:a[2],y:a[3],hp:a[4],alive:!!a[5],ammo:a[6],reload:(a[7]||0)/100,level:a[8],skin:SKINS[a[9]]||SKINS[0],weapon:WEAPON_IDS[a[10]]||'auto',mag:a[11],moving:!!a[12],facing:a[13]||1,vx:a[14]||0,vy:a[15]||0};
 }
-function decodeEnemy(a){return {id:a[0],x:a[1],y:a[2],hp:a[3],maxHp:a[4],type:a[5]?'shooter':'melee',vx:a[6]||0,vy:a[7]||0}}
+function decodeEnemy(a){const type=a[5]===2?'brain':(a[5]===1?'shooter':'melee');return {id:a[0],x:a[1],y:a[2],hp:a[3],maxHp:a[4],type,vx:a[6]||0,vy:a[7]||0}}
 function pushHistory(map,id,st,data){
   let entry=map.get(id);
   if(!entry){entry={h:[],sample:{x:data.x,y:data.y,data}};map.set(id,entry)}
@@ -171,9 +173,10 @@ function handleSnapshot(m){
     const now=performance.now(),presentBullets=new Set();
     for(const a of m.b||[]){
       const id=a[0];presentBullets.add(id);
+      const kind=a[5]===1?'purpleOrb':'enemy';
       let b=enemyBullets.get(id);
-      if(!b){b={id,x:a[1],y:a[2],vx:a[3],vy:a[4],serverX:a[1],serverY:a[2],serverAt:now};enemyBullets.set(id,b)}
-      else{b.vx=a[3];b.vy=a[4];b.serverX=a[1];b.serverY=a[2];b.serverAt=now}
+      if(!b){b={id,x:a[1],y:a[2],vx:a[3],vy:a[4],kind,serverX:a[1],serverY:a[2],serverAt:now};enemyBullets.set(id,b)}
+      else{b.vx=a[3];b.vy=a[4];b.kind=kind;b.serverX=a[1];b.serverY=a[2];b.serverAt=now}
     }
     for(const id of [...enemyBullets.keys()])if(!presentBullets.has(id))enemyBullets.delete(id);
     pickups=(m.k||[]).map(a=>({x:a[0],y:a[1],type:a[2]?'heal':'ammo'}));
@@ -434,7 +437,14 @@ function drawDungeon(){
   }
 }
 function drawProjectiles(){
-  for(const b of enemyBullets.values()){const X=sx(b.x),Y=sy(b.y);if(X>-20&&X<W+20&&Y>-20&&Y<H+20)rect(X-6,Y-6,12,12,'#ff6767')}
+  for(const b of enemyBullets.values()){
+    const X=sx(b.x),Y=sy(b.y);if(X<-30||X>W+30||Y<-30||Y>H+30)continue;
+    if(b.kind==='purpleOrb'&&purpleProjectileImg.complete&&purpleProjectileImg.naturalWidth){
+      const ang=Math.atan2(b.vy,b.vx);
+      ctx.save();ctx.translate(Math.round(X),Math.round(Y));ctx.rotate(ang);
+      ctx.drawImage(purpleProjectileImg,-15,-10,30,20);ctx.restore();
+    }else rect(X-6,Y-6,12,12,'#ff6767');
+  }
   for(const b of fxBullets){
     const X=sx(b.x),Y=sy(b.y);if(X<-30||X>W+30||Y<-30||Y>H+30)continue;
     if(b.kind==='grenade')rect(X-12,Y-12,24,24,'#8ee37a');
@@ -457,8 +467,16 @@ function drawWorld(dt){
 
   if(zone==='dungeon'){
     for(const entry of enemyHist.values()){
-      const s=sampleHistory(entry,renderT);if(!s)continue;const e=s.data,X=sx(s.x),Y=sy(s.y);if(X<-40||X>W+40||Y<-40||Y>H+40)continue;
-      rect(X-10,Y-10,20,20,e.type==='melee'?'#c84e54':'#8d66d9');rect(X-9,Y-16,18,3,'#402126');rect(X-9,Y-16,18*(e.hp/e.maxHp),3,'#f05b63');
+      const s=sampleHistory(entry,renderT);if(!s)continue;const e=s.data,X=sx(s.x),Y=sy(s.y);if(X<-50||X>W+50||Y<-60||Y>H+60)continue;
+      if(e.type==='brain'&&brainEnemyImg.complete&&brainEnemyImg.naturalWidth){
+        const bob=Math.sin(runClock*4.2+e.id*.73)*2;
+        const ew=42,eh=58;
+        ctx.drawImage(brainEnemyImg,Math.round(X-ew/2),Math.round(Y-eh/2+bob),ew,eh);
+        rect(X-15,Y-36+bob,30,4,'#34203d');rect(X-15,Y-36+bob,30*(e.hp/e.maxHp),4,'#c26cff');
+      }else{
+        rect(X-10,Y-10,20,20,e.type==='melee'?'#c84e54':'#8d66d9');
+        rect(X-9,Y-16,18,3,'#402126');rect(X-9,Y-16,18*(e.hp/e.maxHp),3,'#f05b63');
+      }
     }
     for(const pk of pickups){const X=sx(pk.x),Y=sy(pk.y);rect(X-6,Y-6,12,12,pk.type==='heal'?'#74df7d':'#71d4ff')}
     drawProjectiles();
