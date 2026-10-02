@@ -121,7 +121,7 @@ function insideCheckpointDoor(p){
   return p.x>d.x-12&&p.x<d.x+d.w+12&&p.y>d.y-12&&p.y<d.y+d.h+12;
 }
 function playerView(p){
-  return {id:p.id,nick:p.nick,x:p.x,y:p.y,hp:p.hp,alive:p.alive,ammo:p.ammo,reload:p.reload,level:p.profile.level,skin:p.profile.skin,moving:Math.abs(p.input.dx)>0.01||Math.abs(p.input.dy)>0.01};
+  return {id:p.id,nick:p.nick,x:p.x,y:p.y,hp:p.hp,alive:p.alive,ammo:p.ammo,reload:p.reload,level:p.profile.level,skin:p.profile.skin,moving:Math.abs(p.input.dx)>0.01||Math.abs(p.input.dy)>0.01,facing:p.facing||1};
 }
 function snapshotFor(p){
   if(p.zone==='lobby'){
@@ -153,7 +153,7 @@ wss.on('connection',ws=>{
         id:nextPlayerId++,nick,ws,
         profile:cleanProfile(m.profile),
         zone:'lobby',x:150,y:270,hp:100,alive:true,ammo:8,reload:0,fireCd:0,dashCd:0,
-        input:{dx:0,dy:0,dash:false},atCheckpointPrompt:false
+        input:{dx:0,dy:0,dash:false},facing:1,atCheckpointPrompt:false
       };
       resetLobby(p);
       players.set(p.id,p);
@@ -176,6 +176,7 @@ wss.on('connection',ws=>{
       const l=Math.hypot(dx,dy);
       if(l>1){dx/=l;dy/=l;}
       p.input={dx,dy,dash:!!m.dash};
+      if(m.facing===-1||m.facing===1)p.facing=m.facing;
       return;
     }
     if(m.type==='shoot'&&p.zone==='dungeon'&&p.alive&&p.fireCd<=0&&p.reload<=0){
