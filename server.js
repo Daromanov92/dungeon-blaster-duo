@@ -33,7 +33,7 @@ const broadcastZone=(zone,o)=>{const msg=JSON.stringify(o);for(const q of zonePl
 const ALLOWED_SKINS=new Set(['mech_01.png','mech_02.png','mech_03.png','mech_04.png','mech_05.png','mech_06.png','mech_07.png','mech_08.png','mech_09.png','mech_10.png']);
 const WEAPONS={
   auto:{name:'Автомат',mag:30,fireCd:.075,reload:1.15,speed:4500,dmg:7,life:.55},
-  rail:{name:'Рельсотрон',mag:5,fireCd:1,reload:1.8,speed:6000,dmg:90,life:.8},
+  rail:{name:'Рельсотрон',mag:5,fireCd:1,reload:1.8,dmg:90,range:1800,beamLife:.14},
   shotgun:{name:'Дробовик',mag:8,fireCd:.62,reload:1.3,speed:1100,dmg:9,life:.72,pellets:7,spread:.18},
   grenade:{name:'Гранатомёт',mag:4,fireCd:.9,reload:1.55,speed:650,dmg:78,life:1.15,radius:115}
 };
@@ -145,7 +145,7 @@ function snapshotFor(p){
     type:'snapshot',zone:'dungeon',world:{w:DUNGEON.w,h:DUNGEON.h},
     players:zonePlayers('dungeon').map(playerView),
     enemies:[...dungeon.enemies.values()].map(e=>({id:e.id,x:e.x,y:e.y,hp:e.hp,maxHp:e.maxHp,type:e.type})),
-    bullets:dungeon.bullets.map(b=>({x:b.x,y:b.y,vx:b.vx,vy:b.vy,team:b.team,kind:b.kind||'',radius:b.radius||0})),
+    bullets:dungeon.bullets.map(b=>({x:b.x,y:b.y,x2:b.x2,y2:b.y2,vx:b.vx,vy:b.vy,team:b.team,kind:b.kind||'',radius:b.radius||0})),
     pickups:dungeon.pickups,wave:dungeon.wave,
     checkpoint:dungeon.checkpoint,checkpointDoor:dungeon.checkpoint?dungeon.checkpointDoor:null
   };
@@ -211,7 +211,16 @@ wss.on('connection',ws=>{
       let dx=Number(m.dx)||0,dy=Number(m.dy)||0;
       const l=Math.hypot(dx,dy)||1;dx/=l;dy/=l;
       p.ammo--;p.fireCd=w.fireCd;
-      if(p.profile.weapon==='shotgun'){
+      if(p.profile.weapon==='rail'){
+        const x2=p.x+dx*w.range,y2=p.y+dy*w.range;
+        for(const e of [...dungeon.enemies.values()]){
+          if(segmentDist(e.x,e.y,p.x,p.y,x2,y2)<=22){
+            e.hp-=w.dmg;
+            if(e.hp<=0)killEnemy(e,p.id);
+          }
+        }
+        dungeon.bullets.push({x:p.x,y:p.y,x2,y2,vx:0,vy:0,life:w.beamLife,team:'p',owner:p.id,dmg:0,kind:'railBeam'});
+      }else if(p.profile.weapon==='shotgun'){
         const base=Math.atan2(dy,dx);
         for(let i=0;i<w.pellets;i++){
           const a=base+(i-(w.pellets-1)/2)*(w.spread/(w.pellets-1))*2;
@@ -315,6 +324,7 @@ setInterval(()=>{
   }
 
   for(const b of dungeon.bullets){
+    if(b.kind==='railBeam'){b.life-=SIM_DT;continue;}
     const ox=b.x,oy=b.y;
     b.x+=b.vx*SIM_DT;b.y+=b.vy*SIM_DT;b.life-=SIM_DT;
     if(b.x<20||b.x>DUNGEON.w-20||b.y<20||b.y>DUNGEON.h-20)b.life=0;
