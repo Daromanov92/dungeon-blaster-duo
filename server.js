@@ -31,6 +31,13 @@ const send=(ws,o)=>{if(ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify(o))
 const zonePlayers=zone=>[...players.values()].filter(p=>p.zone===zone);
 const broadcastZone=(zone,o)=>{const msg=JSON.stringify(o);for(const q of zonePlayers(zone))if(q.ws.readyState===WebSocket.OPEN)q.ws.send(msg);};
 const ALLOWED_SKINS=new Set(['mech_01.png','mech_02.png','mech_03.png','mech_04.png','mech_05.png','mech_06.png','mech_07.png','mech_08.png','mech_09.png','mech_10.png']);
+const WEAPONS={
+  auto:{name:'Автомат',mag:30,fireCd:.075,reload:1.15,speed:4500,dmg:7,life:.55},
+  rail:{name:'Рельсотрон',mag:5,fireCd:1,reload:1.8,speed:6000,dmg:90,life:.8},
+  shotgun:{name:'Дробовик',mag:8,fireCd:.62,reload:1.3,speed:1100,dmg:9,life:.72,pellets:7,spread:.18},
+  grenade:{name:'Гранатомёт',mag:4,fireCd:.9,reload:1.55,speed:650,dmg:78,life:1.15,radius:115}
+};
+const ALLOWED_WEAPONS=new Set(Object.keys(WEAPONS));
 
 function cleanProfile(raw){
   const r=raw&&typeof raw==='object'?raw:{};
@@ -40,7 +47,8 @@ function cleanProfile(raw){
     kills:Math.max(0,Number(r.kills)||0),
     coins:Math.max(0,Number(r.coins)||0),
     bestWave:Math.max(1,Number(r.bestWave)||1),
-    skin:ALLOWED_SKINS.has(String(r.skin||''))?String(r.skin):'mech_01.png'
+    skin:ALLOWED_SKINS.has(String(r.skin||''))?String(r.skin):'mech_01.png',
+    weapon:ALLOWED_WEAPONS.has(String(r.weapon||''))?String(r.weapon):'auto'
   };
 }
 function profileThreshold(level){return 100+Math.max(0,level-1)*75;}
@@ -68,7 +76,7 @@ function resetLobby(p){
   p.zone='lobby';
   p.x=135+(n%4)*46;
   p.y=220+Math.floor(n/4)*54;
-  p.hp=100;p.alive=true;p.ammo=8;p.reload=0;p.fireCd=0;p.dashCd=0;
+  p.hp=100;p.alive=true;p.ammo=WEAPONS[p.profile.weapon].mag;p.reload=0;p.fireCd=0;p.dashCd=0;
   p.input={dx:0,dy:0,dash:false};
   p.atCheckpointPrompt=false;
 }
@@ -76,7 +84,7 @@ function resetDungeon(p){
   p.zone='dungeon';
   p.x=420+(p.id%6)*42;
   p.y=DUNGEON.h/2+((p.id%5)-2)*46;
-  p.hp=100;p.alive=true;p.ammo=8;p.reload=0;p.fireCd=0;p.dashCd=0;
+  p.hp=100;p.alive=true;p.ammo=WEAPONS[p.profile.weapon].mag;p.reload=0;p.fireCd=0;p.dashCd=0;
   p.input={dx:0,dy:0,dash:false};
 }
 function spawnWave(){
@@ -123,7 +131,7 @@ function insideCheckpointDoor(p){
   return p.x>d.x-12&&p.x<d.x+d.w+12&&p.y>d.y-12&&p.y<d.y+d.h+12;
 }
 function playerView(p){
-  return {id:p.id,nick:p.nick,x:p.x,y:p.y,hp:p.hp,alive:p.alive,ammo:p.ammo,reload:p.reload,level:p.profile.level,skin:p.profile.skin,moving:Math.abs(p.input.dx)>0.01||Math.abs(p.input.dy)>0.01,facing:p.facing||1};
+  return {id:p.id,nick:p.nick,x:p.x,y:p.y,hp:p.hp,alive:p.alive,ammo:p.ammo,reload:p.reload,level:p.profile.level,skin:p.profile.skin,weapon:p.profile.weapon,mag:WEAPONS[p.profile.weapon].mag,moving:Math.abs(p.input.dx)>0.01||Math.abs(p.input.dy)>0.01,facing:p.facing||1};
 }
 function snapshotFor(p){
   if(p.zone==='lobby'){
@@ -154,7 +162,7 @@ wss.on('connection',ws=>{
       p={
         id:nextPlayerId++,nick,ws,
         profile:cleanProfile(m.profile),
-        zone:'lobby',x:150,y:270,hp:100,alive:true,ammo:8,reload:0,fireCd:0,dashCd:0,
+        zone:'lobby',x:150,y:270,hp:100,alive:true,ammo:WEAPONS[cleanProfile(m.profile).weapon].mag,reload:0,fireCd:0,dashCd:0,
         input:{dx:0,dy:0,dash:false},facing:1,atCheckpointPrompt:false
       };
       resetLobby(p);
@@ -177,6 +185,18 @@ wss.on('connection',ws=>{
       return;
     }
 
+    if(m.type==='set_weapon'){
+      const weapon=String(m.weapon||'');
+      if(p.zone==='lobby'&&ALLOWED_WEAPONS.has(weapon)){
+        p.profile.weapon=weapon;
+        p.ammo=WEAPONS[weapon].mag;p.reload=0;p.fireCd=0;
+        send(p.ws,{type:'profile_update',profile:p.profile});
+        send(p.ws,{type:'weapon_applied',id:p.id,weapon,mag:WEAPONS[weapon].mag});
+        broadcastZone('lobby',{type:'weapon_changed',id:p.id,weapon});
+      }
+      return;
+    }
+
     if(m.type==='input'&&p.alive){
       let dx=Number(m.dx)||0,dy=Number(m.dy)||0;
       const l=Math.hypot(dx,dy);
@@ -186,14 +206,26 @@ wss.on('connection',ws=>{
       return;
     }
     if(m.type==='shoot'&&p.zone==='dungeon'&&p.alive&&p.fireCd<=0&&p.reload<=0){
-      if(p.ammo<=0){p.reload=.72;return;}
+      const w=WEAPONS[p.profile.weapon]||WEAPONS.auto;
+      if(p.ammo<=0){p.reload=w.reload;return;}
       let dx=Number(m.dx)||0,dy=Number(m.dy)||0;
       const l=Math.hypot(dx,dy)||1;dx/=l;dy/=l;
-      p.ammo--;p.fireCd=.15;
-      dungeon.bullets.push({x:p.x,y:p.y,vx:dx*900,vy:dy*900,life:1.5,team:'p',owner:p.id,dmg:15});
+      p.ammo--;p.fireCd=w.fireCd;
+      if(p.profile.weapon==='shotgun'){
+        const base=Math.atan2(dy,dx);
+        for(let i=0;i<w.pellets;i++){
+          const a=base+(i-(w.pellets-1)/2)*(w.spread/(w.pellets-1))*2;
+          dungeon.bullets.push({x:p.x,y:p.y,vx:Math.cos(a)*w.speed,vy:Math.sin(a)*w.speed,life:w.life,team:'p',owner:p.id,dmg:w.dmg,kind:'shotgun'});
+        }
+      }else{
+        dungeon.bullets.push({x:p.x,y:p.y,vx:dx*w.speed,vy:dy*w.speed,life:w.life,team:'p',owner:p.id,dmg:w.dmg,kind:p.profile.weapon,radius:w.radius||0});
+      }
       return;
     }
-    if(m.type==='reload'&&p.zone==='dungeon'&&p.reload<=0&&p.ammo<8)p.reload=.72;
+    if(m.type==='reload'&&p.zone==='dungeon'&&p.reload<=0){
+      const w=WEAPONS[p.profile.weapon]||WEAPONS.auto;
+      if(p.ammo<w.mag)p.reload=w.reload;
+    }
     if(m.type==='respawn'&&p.zone==='dungeon'&&!p.alive){p.hp=60;p.alive=true;p.x=420;p.y=DUNGEON.h/2;}
     if(m.type==='return_lobby')resetLobby(p);
     if(m.type==='checkpoint_action'){
@@ -218,11 +250,26 @@ wss.on('connection',ws=>{
   ws.on('close',()=>{if(p)players.delete(p.id);});
 });
 
+function killEnemy(e,ownerId){
+  dungeon.enemies.delete(e.id);
+  const owner=players.get(ownerId);if(owner)awardKill(owner);
+  if(Math.random()<.38)dungeon.pickups.push({x:e.x,y:e.y,type:Math.random()<.55?'ammo':'heal'});
+}
+function explodeGrenade(b){
+  if(b.exploded)return;b.exploded=true;
+  const radius=b.radius||115;
+  for(const e of [...dungeon.enemies.values()]){
+    const d=Math.hypot(b.x-e.x,b.y-e.y);if(d>radius)continue;
+    const dmg=b.dmg*(1-.55*d/radius);e.hp-=dmg;
+    if(e.hp<=0)killEnemy(e,b.owner);
+  }
+}
+
 setInterval(()=>{
   for(const p of players.values()){
     p.fireCd=Math.max(0,p.fireCd-SIM_DT);
     p.dashCd=Math.max(0,p.dashCd-SIM_DT);
-    if(p.reload>0){p.reload-=SIM_DT;if(p.reload<=0)p.ammo=8;}
+    if(p.reload>0){p.reload-=SIM_DT;if(p.reload<=0)p.ammo=(WEAPONS[p.profile.weapon]||WEAPONS.auto).mag;}
     if(!p.alive)continue;
 
     const world=p.zone==='lobby'?LOBBY:DUNGEON;
@@ -270,16 +317,17 @@ setInterval(()=>{
     b.x+=b.vx*SIM_DT;b.y+=b.vy*SIM_DT;b.life-=SIM_DT;
     if(b.x<20||b.x>DUNGEON.w-20||b.y<20||b.y>DUNGEON.h-20)b.life=0;
     if(b.team==='p'){
-      for(const e of dungeon.enemies.values()){
-        if(Math.hypot(b.x-e.x,b.y-e.y)<16){
-          e.hp-=b.dmg;b.life=0;
-          if(e.hp<=0){
-            dungeon.enemies.delete(e.id);
-            const owner=players.get(b.owner);
-            if(owner)awardKill(owner);
-            if(Math.random()<.38)dungeon.pickups.push({x:e.x,y:e.y,type:Math.random()<.55?'ammo':'heal'});
+      if(b.kind==='grenade'){
+        let hit=false;
+        for(const e of dungeon.enemies.values())if(Math.hypot(b.x-e.x,b.y-e.y)<18){hit=true;break;}
+        if(hit||b.life<=0){explodeGrenade(b);b.life=0;}
+      }else{
+        for(const e of dungeon.enemies.values()){
+          if(Math.hypot(b.x-e.x,b.y-e.y)<16){
+            e.hp-=b.dmg;b.life=0;
+            if(e.hp<=0)killEnemy(e,b.owner);
+            break;
           }
-          break;
         }
       }
     }else{
