@@ -145,7 +145,7 @@ function snapshotFor(p){
     type:'snapshot',zone:'dungeon',world:{w:DUNGEON.w,h:DUNGEON.h},
     players:zonePlayers('dungeon').map(playerView),
     enemies:[...dungeon.enemies.values()].map(e=>({id:e.id,x:e.x,y:e.y,hp:e.hp,maxHp:e.maxHp,type:e.type})),
-    bullets:dungeon.bullets.map(b=>({x:b.x,y:b.y,vx:b.vx,vy:b.vy,team:b.team})),
+    bullets:dungeon.bullets.map(b=>({x:b.x,y:b.y,vx:b.vx,vy:b.vy,team:b.team,kind:b.kind||'',radius:b.radius||0})),
     pickups:dungeon.pickups,wave:dungeon.wave,
     checkpoint:dungeon.checkpoint,checkpointDoor:dungeon.checkpoint?dungeon.checkpointDoor:null
   };
@@ -255,6 +255,7 @@ function killEnemy(e,ownerId){
   const owner=players.get(ownerId);if(owner)awardKill(owner);
   if(Math.random()<.38)dungeon.pickups.push({x:e.x,y:e.y,type:Math.random()<.55?'ammo':'heal'});
 }
+function segmentDist(px,py,x1,y1,x2,y2){const vx=x2-x1,vy=y2-y1,wx=px-x1,wy=py-y1,c=vx*vx+vy*vy;if(c<=.0001)return Math.hypot(px-x1,py-y1);const t=Math.max(0,Math.min(1,(wx*vx+wy*vy)/c));return Math.hypot(px-(x1+vx*t),py-(y1+vy*t));}
 function explodeGrenade(b){
   if(b.exploded)return;b.exploded=true;
   const radius=b.radius||115;
@@ -314,16 +315,17 @@ setInterval(()=>{
   }
 
   for(const b of dungeon.bullets){
+    const ox=b.x,oy=b.y;
     b.x+=b.vx*SIM_DT;b.y+=b.vy*SIM_DT;b.life-=SIM_DT;
     if(b.x<20||b.x>DUNGEON.w-20||b.y<20||b.y>DUNGEON.h-20)b.life=0;
     if(b.team==='p'){
       if(b.kind==='grenade'){
         let hit=false;
-        for(const e of dungeon.enemies.values())if(Math.hypot(b.x-e.x,b.y-e.y)<18){hit=true;break;}
+        for(const e of dungeon.enemies.values())if(segmentDist(e.x,e.y,ox,oy,b.x,b.y)<18){hit=true;break;}
         if(hit||b.life<=0){explodeGrenade(b);b.life=0;}
       }else{
         for(const e of dungeon.enemies.values()){
-          if(Math.hypot(b.x-e.x,b.y-e.y)<16){
+          if(segmentDist(e.x,e.y,ox,oy,b.x,b.y)<16){
             e.hp-=b.dmg;b.life=0;
             if(e.hp<=0)killEnemy(e,b.owner);
             break;
