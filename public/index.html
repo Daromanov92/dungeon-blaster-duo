@@ -146,7 +146,10 @@ setInterval(()=>{
   if(!joined||!ws||ws.readyState!==1)return;
   const blocked=choiceOpen||skinOpen;
   const dx=blocked?0:(keys.KeyD?1:0)-(keys.KeyA?1:0),dy=blocked?0:(keys.KeyS?1:0)-(keys.KeyW?1:0);
-  ws.send(JSON.stringify({type:'input',dx,dy,dash:blocked?false:!!keys.Space}));
+  const p=me();
+  let facing=1;
+  if(p){const px=p.x-camera.x;facing=mouse.x<px?-1:1;}
+  ws.send(JSON.stringify({type:'input',dx,dy,dash:blocked?false:!!keys.Space,facing}));
 },16);
 
 setInterval(()=>{
@@ -165,7 +168,16 @@ function drawPlayer(p,isMe,x,y){
   const bob=moving?Math.sin(runClock*18)*1.5:0;
   const squeeze=moving?Math.round(Math.sin(runClock*18))*2:0;
   const dw=48,dh=58-squeeze,dy=-31+(58-dh)+bob;
-  if(img&&img.complete&&img.naturalWidth){ctx.drawImage(img,Math.round(X-dw/2),Math.round(Y+dy),dw,dh);}else{const col=isMe?'#eeeef3':'#63c9ff';rect(X-11,Y-11+bob,22,22-squeeze,col);}
+  const facing=isMe?(mouse.x<X?-1:1):(p.facing||1);
+  if(img&&img.complete&&img.naturalWidth){
+    ctx.save();
+    ctx.translate(Math.round(X),0);
+    ctx.scale(facing,1);
+    ctx.drawImage(img,Math.round(-dw/2),Math.round(Y+dy),dw,dh);
+    ctx.restore();
+  }else{
+    const col=isMe?'#eeeef3':'#63c9ff';rect(X-11,Y-11+bob,22,22-squeeze,col);
+  }
   ctx.fillStyle='#fff';ctx.font='12px Arial';ctx.textAlign='center';ctx.fillText(p.nick+'  Lv.'+p.level,X,Y-38+bob);
   rect(X-14,Y+30+bob,28,3,'#472327');rect(X-14,Y+30+bob,28*(p.hp/100),3,'#62d26f');
 }
