@@ -29,6 +29,8 @@ const server=http.createServer((req,res)=>{
 const wss=new WebSocket.Server({server,perMessageDeflate:false});
 const send=(ws,o)=>{if(ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify(o));};
 const zonePlayers=zone=>[...players.values()].filter(p=>p.zone===zone);
+const broadcastZone=(zone,o)=>{const msg=JSON.stringify(o);for(const q of zonePlayers(zone))if(q.ws.readyState===WebSocket.OPEN)q.ws.send(msg);};
+const ALLOWED_SKINS=new Set(['mech_01.png','mech_02.png','mech_03.png','mech_04.png','mech_05.png','mech_06.png','mech_07.png','mech_08.png','mech_09.png','mech_10.png']);
 
 function cleanProfile(raw){
   const r=raw&&typeof raw==='object'?raw:{};
@@ -38,7 +40,7 @@ function cleanProfile(raw){
     kills:Math.max(0,Number(r.kills)||0),
     coins:Math.max(0,Number(r.coins)||0),
     bestWave:Math.max(1,Number(r.bestWave)||1),
-    skin:/^mech_(0[1-9]|10)\.png$/.test(String(r.skin||''))?String(r.skin):'mech_01.png'
+    skin:ALLOWED_SKINS.has(String(r.skin||''))?String(r.skin):'mech_01.png'
   };
 }
 function profileThreshold(level){return 100+Math.max(0,level-1)*75;}
@@ -164,9 +166,13 @@ wss.on('connection',ws=>{
 
     if(m.type==='set_skin'){
       const skin=String(m.skin||'');
-      if(/^mech_(0[1-9]|10)\.png$/.test(skin)){
+      if(ALLOWED_SKINS.has(skin)){
         p.profile.skin=skin;
         send(p.ws,{type:'profile_update',profile:p.profile});
+        send(p.ws,{type:'skin_applied',id:p.id,skin});
+        broadcastZone(p.zone,{type:'skin_changed',id:p.id,skin});
+      }else{
+        send(p.ws,{type:'skin_error',skin});
       }
       return;
     }
