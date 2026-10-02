@@ -16,15 +16,16 @@ button{margin-top:10px;border:0;background:#e0b449;color:#1a160d;font-weight:800
 .status{margin-top:14px;color:#d0d0da;min-height:22px}
 #toast{position:fixed;left:50%;top:16px;transform:translateX(-50%);background:#22242d;border:1px solid #444956;padding:8px 14px;border-radius:9px;display:none;z-index:20}
 #choice{position:fixed;inset:0;background:rgba(8,8,12,.72);display:none;place-items:center;z-index:15}
-#skinModal{position:fixed;inset:0;background:rgba(8,8,12,.76);display:none;place-items:center;z-index:16}
+#skinModal,#weaponModal{position:fixed;inset:0;background:rgba(8,8,12,.76);display:none;place-items:center;z-index:16}
 .choiceButtons{display:grid;grid-template-columns:1fr 1fr;gap:10px}.choiceButtons button{margin-top:0}.secondary{background:#353541;color:#fff}
-.skinGrid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:14px}.skinBtn{height:92px;background:#111118;border:1px solid #3b3b48;border-radius:10px;padding:6px;cursor:pointer}.skinBtn.selected{outline:2px solid #e0b449}.skinBtn img{width:58px;height:68px;object-fit:contain;image-rendering:pixelated}
+.skinGrid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:14px}.skinBtn{height:92px;background:#111118;border:1px solid #3b3b48;border-radius:10px;padding:6px;cursor:pointer}.skinBtn.selected{outline:2px solid #e0b449}.skinBtn img{width:58px;height:68px;object-fit:contain;image-rendering:pixelated}.weaponGrid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin:14px 0}.weaponBtn{height:auto;min-height:92px;background:#111118;color:#fff;border:1px solid #3b3b48;border-radius:10px;padding:12px;text-align:left}.weaponBtn.selected{outline:2px solid #e0b449}.weaponBtn b{display:block;font-size:17px;margin-bottom:6px}.weaponBtn span{font-size:12px;color:#aaaabd;line-height:1.4}
 </style></head><body>
 <canvas id="game" width="960" height="540"></canvas>
 <div id="hud"></div><div id="help">WASD — движение<br>ЛКМ — стрелять<br>R — перезарядка<br>Space — рывок</div><div id="toast"></div>
 
 <div id="choice"><div class="card"><h1>Три волны пройдены</h1><div class="sub">Вернуться в хаб или продолжить следующие 3 волны?</div><div class="choiceButtons"><button id="hubBtn" class="secondary">ВЕРНУТЬСЯ В ХАБ</button><button id="continueBtn">ПРОДОЛЖИТЬ</button></div></div></div>
 <div id="skinModal"><div class="card" style="width:min(720px,94vw);max-height:90vh;overflow:auto"><h1>Выбор меха</h1><div class="sub">Выберите меха, затем подтвердите выбор.</div><button id="applySkin" style="background:#e0b449;color:#1a160d;font-weight:900">ПРИМЕНИТЬ СКИН</button><div id="skinGrid" class="skinGrid"></div><button id="closeSkin" class="secondary">ЗАКРЫТЬ</button></div></div>
+<div id="weaponModal"><div class="card" style="width:min(620px,94vw)"><h1>Выбор оружия</h1><div class="sub">Оружие можно сменить в хабе.</div><div id="weaponGrid" class="weaponGrid"></div><button id="applyWeapon">ВЗЯТЬ ОРУЖИЕ</button><button id="closeWeapon" class="secondary">ЗАКРЫТЬ</button></div></div>
 
 <div id="login"><div class="card">
 <h1>Dungeon Blaster</h1>
@@ -39,13 +40,15 @@ const c=document.getElementById('game'),ctx=c.getContext('2d'),hud=document.getE
 const login=document.getElementById('login'),nick=document.getElementById('nick'),play=document.getElementById('play'),loginStatus=document.getElementById('loginStatus'),toast=document.getElementById('toast');
 const choice=document.getElementById('choice'),hubBtn=document.getElementById('hubBtn'),continueBtn=document.getElementById('continueBtn');
 const skinModal=document.getElementById('skinModal'),skinGrid=document.getElementById('skinGrid'),closeSkin=document.getElementById('closeSkin'),applySkin=document.getElementById('applySkin');
+const weaponModal=document.getElementById('weaponModal'),weaponGrid=document.getElementById('weaponGrid'),applyWeapon=document.getElementById('applyWeapon'),closeWeapon=document.getElementById('closeWeapon');
 ctx.imageSmoothingEnabled=false;
 
 const W=960,H=540,keys={},mouse={x:W/2,y:H/2,down:false};
 const SKINS=['mech_01.png','mech_02.png','mech_03.png','mech_04.png','mech_05.png','mech_06.png','mech_07.png','mech_08.png','mech_09.png','mech_10.png'];
 const skinImgs={};for(const s of SKINS){const im=new Image();im.src='/'+s;skinImgs[s]=im;}
-const SKIN_TABLE={x:420,y:235,w:120,h:70};
-let ws,myId=null,joined=false,zone='lobby',fireCd=0,last=performance.now(),choiceOpen=false,skinOpen=false,pendingSkin='mech_01.png',runClock=0,profile={level:1,xp:0,kills:0,coins:0,bestWave:1,skin:'mech_01.png'};
+const SKIN_TABLE={x:420,y:235,w:120,h:70},WEAPON_TABLE={x:610,y:235,w:140,h:70};
+const WEAPON_INFO={auto:{name:'Автомат',mag:30,fireCd:.075,desc:'30 патронов · очень высокая скорострельность · скорость пули ×5'},rail:{name:'Рельсотрон',mag:5,fireCd:1,desc:'90 урона · 1 выстрел/сек · сверхбыстрый снаряд'},shotgun:{name:'Дробовик',mag:8,fireCd:.62,desc:'7 дробин · высокий урон вблизи · широкий разброс'},grenade:{name:'Гранатомёт',mag:4,fireCd:.9,desc:'78 урона в центре · радиус взрыва 115 · 4 гранаты'}};
+let ws,myId=null,joined=false,zone='lobby',fireCd=0,last=performance.now(),choiceOpen=false,skinOpen=false,weaponOpen=false,pendingSkin='mech_01.png',pendingWeapon='auto',runClock=0,profile={level:1,xp:0,kills:0,coins:0,bestWave:1,skin:'mech_01.png',weapon:'auto'};
 let snap={players:[],enemies:[],bullets:[],pickups:[],wave:1,world:{w:960,h:540}};
 const smoothPlayers=new Map(),smoothEnemies=new Map();
 let localDraw={x:150,y:270,ready:false};
@@ -61,9 +64,9 @@ function keyFor(n){return 'dungeon_blaster_profile_'+n.trim().toLowerCase();}
 function loadProfile(n){
   try{
     const raw=localStorage.getItem(keyFor(n));
-    if(raw)return Object.assign({level:1,xp:0,kills:0,coins:0,bestWave:1,skin:'mech_01.png'},JSON.parse(raw));
+    if(raw)return Object.assign({level:1,xp:0,kills:0,coins:0,bestWave:1,skin:'mech_01.png',weapon:'auto'},JSON.parse(raw));
   }catch{}
-  return {level:1,xp:0,kills:0,coins:0,bestWave:1,skin:'mech_01.png'};
+  return {level:1,xp:0,kills:0,coins:0,bestWave:1,skin:'mech_01.png',weapon:'auto'};
 }
 function saveProfile(){
   const n=nick.value.trim();if(!n)return;
@@ -71,7 +74,10 @@ function saveProfile(){
 }
 function threshold(l){return 100+Math.max(0,l-1)*75;}
 function nearSkinTable(p){if(!p||zone!=='lobby')return false;const cx=SKIN_TABLE.x+SKIN_TABLE.w/2,cy=SKIN_TABLE.y+SKIN_TABLE.h/2;return Math.hypot(p.x-cx,p.y-cy)<95;}
-function rebuildSkinGrid(){skinGrid.innerHTML='';for(const s of SKINS){const b=document.createElement('button');b.className='skinBtn'+(pendingSkin===s?' selected':'');const im=document.createElement('img');im.src='/'+s;im.alt=s;b.appendChild(im);b.onclick=()=>{pendingSkin=s;rebuildSkinGrid();};skinGrid.appendChild(b);}}
+function nearWeaponTable(p){if(!p||zone!=='lobby')return false;const cx=WEAPON_TABLE.x+WEAPON_TABLE.w/2,cy=WEAPON_TABLE.y+WEAPON_TABLE.h/2;return Math.hypot(p.x-cx,p.y-cy)<100;}
+function rebuildWeaponGrid(){weaponGrid.innerHTML='';for(const [id,w] of Object.entries(WEAPON_INFO)){const b=document.createElement('button');b.className='weaponBtn'+(pendingWeapon===id?' selected':'');b.innerHTML='<b>'+w.name+'</b><span>'+w.desc+'</span>';b.onclick=()=>{pendingWeapon=id;rebuildWeaponGrid();};weaponGrid.appendChild(b);}}
+function rebuildSkinGrid(){skinGrid.innerHTML='';for(const s of SKINS){const b=document.createElement('button');b.className='skinBtn'+(pendingSkin===s?' selected':'');const im=document.createElement('img');im.src='/'+s;im.alt=s;b.appendChild(im);b.onclick=()=>{pendingSkin=s;rebuildSkinGrid();
+rebuildWeaponGrid();};skinGrid.appendChild(b);}}
 
 function connect(){
   ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host);
@@ -83,12 +89,14 @@ function connect(){
   ws.onmessage=e=>{
     const m=JSON.parse(e.data);
     if(m.type==='joined'){
-      myId=m.id;joined=true;profile=m.profile||profile;pendingSkin=profile.skin||'mech_01.png';saveProfile();login.style.display='none';note('Добро пожаловать');
+      myId=m.id;joined=true;profile=m.profile||profile;pendingSkin=profile.skin||'mech_01.png';pendingWeapon=profile.weapon||'auto';saveProfile();login.style.display='none';note('Добро пожаловать');
     }
     if(m.type==='profile_update'){profile=m.profile;saveProfile();}
     if(m.type==='skin_applied'){profile.skin=m.skin;pendingSkin=m.skin;saveProfile();const local=me();if(local)local.skin=m.skin;const sm=smoothPlayers.get(myId);if(sm&&sm.data)sm.data.skin=m.skin;rebuildSkinGrid();skinOpen=false;skinModal.style.display='none';applySkin.disabled=false;applySkin.textContent='ПРИМЕНИТЬ СКИН';note('Скин применён');}
     if(m.type==='skin_changed'){const sp=snap.players.find(x=>x.id===m.id);if(sp)sp.skin=m.skin;const sm=smoothPlayers.get(m.id);if(sm&&sm.data)sm.data.skin=m.skin;}
     if(m.type==='skin_error'){note('Ошибка применения скина');}
+    if(m.type==='weapon_applied'){profile.weapon=m.weapon;pendingWeapon=m.weapon;saveProfile();const p=me();if(p){p.weapon=m.weapon;p.mag=m.mag;p.ammo=m.mag;}weaponOpen=false;weaponModal.style.display='none';applyWeapon.disabled=false;applyWeapon.textContent='ВЗЯТЬ ОРУЖИЕ';rebuildWeaponGrid();note('Оружие: '+WEAPON_INFO[m.weapon].name);}
+    if(m.type==='weapon_changed'){const p=snap.players.find(x=>x.id===m.id);if(p)p.weapon=m.weapon;}
     if(m.type==='entered_dungeon'){zone='dungeon';localDraw.ready=false;smoothPlayers.clear();smoothEnemies.clear();note('Вы вошли в данж');}
     if(m.type==='back_to_hub'){zone='lobby';choiceOpen=false;choice.style.display='none';localDraw.ready=false;smoothPlayers.clear();smoothEnemies.clear();note('Вы вернулись в хаб');}
     if(m.type==='checkpoint_ready')note('3 волны пройдены — появилась дверь');
@@ -131,13 +139,16 @@ applySkin.onclick=()=>{
   setTimeout(()=>{applySkin.disabled=false;applySkin.textContent='ПРИМЕНИТЬ СКИН';},700);
 };
 closeSkin.onclick=()=>{pendingSkin=profile.skin||'mech_01.png';skinOpen=false;skinModal.style.display='none';rebuildSkinGrid();};
+applyWeapon.onclick=()=>{if(!WEAPON_INFO[pendingWeapon]||!ws||ws.readyState!==1)return;applyWeapon.disabled=true;applyWeapon.textContent='БЕРУ...';ws.send(JSON.stringify({type:'set_weapon',weapon:pendingWeapon}));setTimeout(()=>{applyWeapon.disabled=false;applyWeapon.textContent='ВЗЯТЬ ОРУЖИЕ';},700);};
+closeWeapon.onclick=()=>{pendingWeapon=profile.weapon||'auto';weaponOpen=false;weaponModal.style.display='none';rebuildWeaponGrid();};
 hubBtn.onclick=()=>{if(ws&&ws.readyState===1){ws.send(JSON.stringify({type:'checkpoint_action',action:'hub'}));choiceOpen=false;choice.style.display='none';}};
 continueBtn.onclick=()=>{if(ws&&ws.readyState===1){ws.send(JSON.stringify({type:'checkpoint_action',action:'continue'}));choiceOpen=false;choice.style.display='none';}};
 
 addEventListener('keydown',e=>{
   keys[e.code]=true;
-  if(e.code==='KeyE'&&zone==='lobby'&&!skinOpen){const p=me();if(nearSkinTable(p)){pendingSkin=profile.skin||'mech_01.png';skinOpen=true;skinModal.style.display='grid';rebuildSkinGrid();}}
+  if(e.code==='KeyE'&&zone==='lobby'&&!skinOpen&&!weaponOpen){const p=me();if(nearSkinTable(p)){pendingSkin=profile.skin||'mech_01.png';skinOpen=true;skinModal.style.display='grid';rebuildSkinGrid();}else if(nearWeaponTable(p)){pendingWeapon=profile.weapon||'auto';weaponOpen=true;weaponModal.style.display='grid';rebuildWeaponGrid();}}
   if(e.code==='Escape'&&skinOpen){skinOpen=false;skinModal.style.display='none';}
+  if(e.code==='Escape'&&weaponOpen){weaponOpen=false;weaponModal.style.display='none';}
   if(e.code==='KeyR'&&zone==='dungeon'&&ws&&ws.readyState===1)ws.send(JSON.stringify({type:'reload'}));
 });
 addEventListener('keyup',e=>keys[e.code]=false);
@@ -146,7 +157,7 @@ c.addEventListener('mousedown',()=>mouse.down=true);addEventListener('mouseup',(
 
 setInterval(()=>{
   if(!joined||!ws||ws.readyState!==1)return;
-  const blocked=choiceOpen||skinOpen;
+  const blocked=choiceOpen||skinOpen||weaponOpen;
   const dx=blocked?0:(keys.KeyD?1:0)-(keys.KeyA?1:0),dy=blocked?0:(keys.KeyS?1:0)-(keys.KeyW?1:0);
   const p=me();
   let facing=1;
@@ -159,7 +170,7 @@ setInterval(()=>{
   const p=me();if(!p)return;
   const wx=mouse.x+camera.x,wy=mouse.y+camera.y;
   const[d1,d2]=norm(wx-p.x,wy-p.y);
-  ws.send(JSON.stringify({type:'shoot',dx:d1,dy:d2}));fireCd=.15;
+  ws.send(JSON.stringify({type:'shoot',dx:d1,dy:d2}));fireCd=(WEAPON_INFO[profile.weapon]||WEAPON_INFO.auto).fireCd;
 },20);
 
 function sx(x){return x-camera.x}function sy(y){return y-camera.y}
@@ -200,6 +211,9 @@ function drawLobby(){
   rect(SKIN_TABLE.x,SKIN_TABLE.y,SKIN_TABLE.w,SKIN_TABLE.h,'#5a3924');rect(SKIN_TABLE.x+8,SKIN_TABLE.y+8,SKIN_TABLE.w-16,SKIN_TABLE.h-16,'#7a5130');
   rect(SKIN_TABLE.x+12,SKIN_TABLE.y+SKIN_TABLE.h,12,26,'#392517');rect(SKIN_TABLE.x+SKIN_TABLE.w-24,SKIN_TABLE.y+SKIN_TABLE.h,12,26,'#392517');
   ctx.fillStyle='#f0d39a';ctx.font='12px Arial';ctx.fillText('МЕХИ',SKIN_TABLE.x+SKIN_TABLE.w/2,SKIN_TABLE.y-10);
+  rect(WEAPON_TABLE.x,WEAPON_TABLE.y,WEAPON_TABLE.w,WEAPON_TABLE.h,'#303744');rect(WEAPON_TABLE.x+8,WEAPON_TABLE.y+8,WEAPON_TABLE.w-16,WEAPON_TABLE.h-16,'#465267');
+  rect(WEAPON_TABLE.x+12,WEAPON_TABLE.y+WEAPON_TABLE.h,12,26,'#202631');rect(WEAPON_TABLE.x+WEAPON_TABLE.w-24,WEAPON_TABLE.y+WEAPON_TABLE.h,12,26,'#202631');
+  ctx.fillStyle='#b9ddff';ctx.font='12px Arial';ctx.fillText('ОРУЖИЕ',WEAPON_TABLE.x+WEAPON_TABLE.w/2,WEAPON_TABLE.y-10);
   const d=snap.door||{x:865,y:190,w:55,h:160};
   rect(d.x,d.y,d.w,d.h,'#2a1719');rect(d.x+8,d.y+10,d.w-16,d.h-20,'#7b4231');
   rect(d.x+20,d.y+16,7,d.h-32,'#d0a65b');
@@ -235,7 +249,7 @@ function draw(dt){
       rect(X-9,Y-16,18,3,'#402126');rect(X-9,Y-16,18*(e.hp/e.maxHp),3,'#f05b63');
     }
     for(const pk of snap.pickups||[]){const X=sx(pk.x),Y=sy(pk.y);rect(X-6,Y-6,12,12,pk.type==='heal'?'#74df7d':'#71d4ff');}
-    for(const b of snap.bullets||[]){const X=sx(b.x),Y=sy(b.y);if(X>-10&&X<W+10&&Y>-10&&Y<H+10)rect(X-3,Y-3,6,6,b.team==='p'?'#ffd65c':'#ff6767');}
+    for(const b of snap.bullets||[]){const X=sx(b.x),Y=sy(b.y);if(X<-12||X>W+12||Y<-12||Y>H+12)continue;if(b.team==='e'){rect(X-3,Y-3,6,6,'#ff6767');}else if(b.kind==='grenade'){rect(X-6,Y-6,12,12,'#8ee37a');}else if(b.kind==='rail'){rect(X-7,Y-2,14,4,'#9eeaff');}else if(b.kind==='shotgun'){rect(X-2,Y-2,4,4,'#ffc96a');}else{rect(X-2,Y-2,5,5,'#ffd65c');}}
   }
 
   for(const s of smoothPlayers.values()){
@@ -261,7 +275,7 @@ function draw(dt){
   const p=me();
   hud.innerHTML=p?
     'Профиль: '+esc(p.nick)+'<br>Уровень: '+profile.level+' ('+Math.floor(profile.xp)+'/'+threshold(profile.level)+' XP)<br>Убийства: '+profile.kills+' · Монеты: '+profile.coins+
-    (zone==='dungeon'?'<br>Волна: '+snap.wave+' · HP '+Math.ceil(p.hp)+'/100 · Патроны '+p.ammo+'/8'+(snap.checkpoint?'<br><span style="color:#e0b449">Открылась дверь выхода</span>':''):'<br><span style="color:#e0b449">Идите к двери справа →</span>'+(nearSkinTable(p)?'<br><span style="color:#8bd6ff">E — выбрать меха</span>':'')):
+    (zone==='dungeon'?'<br>Волна: '+snap.wave+' · HP '+Math.ceil(p.hp)+'/100 · '+(WEAPON_INFO[p.weapon||profile.weapon]||WEAPON_INFO.auto).name+' · Патроны '+p.ammo+'/'+(p.mag||(WEAPON_INFO[p.weapon||profile.weapon]||WEAPON_INFO.auto).mag)+(snap.checkpoint?'<br><span style="color:#e0b449">Открылась дверь выхода</span>':''):'<br><span style="color:#e0b449">Идите к двери справа →</span>'+(nearSkinTable(p)?'<br><span style="color:#8bd6ff">E — выбрать меха</span>':'')+(nearWeaponTable(p)?'<br><span style="color:#9eeaff">E — выбрать оружие</span>':'')):
     '';
 }
 function loop(t){const dt=Math.min(.033,(t-last)/1000);last=t;runClock+=dt;fireCd=Math.max(0,fireCd-dt);draw(dt);requestAnimationFrame(loop)}
