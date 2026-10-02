@@ -1,6 +1,7 @@
 const http=require('http');
 const fs=require('fs');
 const path=require('path');
+const crypto=require('crypto');
 const WebSocket=require('ws');
 const {performance}=require('perf_hooks');
 
@@ -9,8 +10,9 @@ const LOBBY={w:960,h:540,door:{x:865,y:190,w:55,h:160}};
 const DUNGEON={w:4800,h:2700};
 const SIM_HZ=60;
 const SIM_DT=1/SIM_HZ;
-const SNAPSHOT_MS=50; // 20 Hz: authoritative state, visuals run locally at render FPS
-const SNAPSHOT_BACKPRESSURE=128*1024;
+const SNAPSHOT_MS=80; // 12.5 Hz bulk state stream; control traffic uses a separate WebSocket
+const SNAPSHOT_BACKPRESSURE=8*1024;
+const AOI_RADIUS=1350;
 
 const SKINS=['mech_01.png','mech_02.png','mech_03.png','mech_04.png','mech_05.png','mech_06.png','mech_07.png','mech_08.png','mech_09.png','mech_10.png'];
 const ALLOWED_SKINS=new Set(SKINS);
@@ -25,6 +27,7 @@ const ALLOWED_WEAPONS=new Set(WEAPON_IDS);
 
 let nextPlayerId=1,nextEnemyId=1,nextBulletId=1,nextShotId=1;
 const players=new Map();
+const sessions=new Map();
 const dungeon={
   wave:1,enemies:new Map(),bullets:[],pickups:[],
   checkpoint:false,checkpointDoor:{x:2360,y:1260,w:80,h:180}
@@ -149,26 +152,33 @@ function weaponCode(w){const i=WEAPON_IDS.indexOf(w);return i<0?0:i;}
 function playerPacket(p){
   return [
     p.id,p.nick,
-    Math.round(p.x*10)/10,Math.round(p.y*10)/10,
-    Math.round(p.hp*10)/10,p.alive?1:0,p.ammo,Math.max(0,Math.round(p.reload*100)/100),
+    Math.round(p.x),Math.round(p.y),
+    Math.round(p.hp),p.alive?1:0,p.ammo,Math.max(0,Math.round(p.reload*100)),
     p.profile.level,skinCode(p.profile.skin),weaponCode(p.profile.weapon),weaponOf(p).mag,
     (Math.abs(p.vx)+Math.abs(p.vy)>1)?1:0,p.facing||1,
-    Math.round(p.vx*10)/10,Math.round(p.vy*10)/10
+    Math.round(p.vx),Math.round(p.vy)
   ];
 }
 function enemyPacket(e){
-  return [e.id,Math.round(e.x*10)/10,Math.round(e.y*10)/10,Math.round(e.hp*10)/10,e.maxHp,e.type==='shooter'?1:0,Math.round(e.vx*10)/10,Math.round(e.vy*10)/10];
+  return [e.id,Math.round(e.x),Math.round(e.y),Math.round(e.hp),e.maxHp,e.type==='shooter'?1:0,Math.round(e.vx),Math.round(e.vy)];
 }
-function buildLobbySnapshot(st){
-  return JSON.stringify({t:'s',z:0,st,p:zonePlayers('lobby').map(playerPacket),v:dungeon.wave});
+function inAoi(p,x,y,r=AOI_RADIUS){
+  const dx=x-p.x,dy=y-p.y;return dx*dx+dy*dy<=r*r;
 }
-function buildDungeonSnapshot(st){
+function buildSnapshotFor(p,st){
+  if(p.zone==='lobby'){
+    return JSON.stringify({t:'s',z:0,st,p:zonePlayers('lobby').map(playerPacket),v:dungeon.wave});
+  }
+  const enemies=[];
+  for(const e of dungeon.enemies.values())if(inAoi(p,e.x,e.y))enemies.push(enemyPacket(e));
+  const bullets=[];
+  for(const b of dungeon.bullets)if(b.team==='e'&&inAoi(p,b.x,b.y,AOI_RADIUS+250))bullets.push([b.id,Math.round(b.x),Math.round(b.y),Math.round(b.vx),Math.round(b.vy)]);
+  const nearPickups=[];
+  for(const pk of dungeon.pickups)if(inAoi(p,pk.x,pk.y))nearPickups.push([Math.round(pk.x),Math.round(pk.y),pk.type==='heal'?1:0]);
   return JSON.stringify({
     t:'s',z:1,st,
     p:zonePlayers('dungeon').map(playerPacket),
-    e:[...dungeon.enemies.values()].map(enemyPacket),
-    b:dungeon.bullets.filter(b=>b.team==='e').map(b=>[b.id,Math.round(b.x*10)/10,Math.round(b.y*10)/10,Math.round(b.vx*10)/10,Math.round(b.vy*10)/10]),
-    k:dungeon.pickups.map(pk=>[Math.round(pk.x*10)/10,Math.round(pk.y*10)/10,pk.type==='heal'?1:0]),
+    e:enemies,b:bullets,k:nearPickups,
     v:dungeon.wave,c:dungeon.checkpoint?1:0
   });
 }
@@ -196,10 +206,27 @@ function explodeGrenade(b){
   broadcast('dungeon',{type:'explosion_fx',x:b.x,y:b.y,radius,shotId:b.shotId});
 }
 
-wss.on('connection',ws=>{
+wss.on('connection',(ws,req)=>{
   ws._alive=true;
   if(ws._socket){try{ws._socket.setNoDelay(true);ws._socket.setKeepAlive(true,10000);}catch{}}
   ws.on('pong',()=>ws._alive=true);
+
+  let parsedUrl;
+  try{parsedUrl=new URL(req.url||'/', 'http://localhost');}catch{parsedUrl=new URL('/', 'http://localhost');}
+  if(parsedUrl.pathname==='/state'){
+    const token=parsedUrl.searchParams.get('token')||'';
+    const owner=sessions.get(token);
+    if(!owner){ws.close(1008,'invalid state token');return;}
+    if(owner.stateWs&&owner.stateWs!==ws&&owner.stateWs.readyState===WebSocket.OPEN){
+      try{owner.stateWs.close(1000,'replaced');}catch{}
+    }
+    owner.stateWs=ws;
+    send(ws,{type:'state_ready'});
+    ws.on('close',()=>{if(owner.stateWs===ws)owner.stateWs=null;});
+    ws.on('error',()=>{});
+    return;
+  }
+
   let p=null;
 
   ws.on('message',buf=>{
@@ -214,15 +241,16 @@ wss.on('connection',ws=>{
       if(p)return;
       const nick=String(m.nick||'Player').trim().slice(0,16)||'Player';
       const profile=cleanProfile(m.profile);
+      const token=crypto.randomBytes(16).toString('hex');
       p={
-        id:nextPlayerId++,nick,ws,profile,profileDirty:false,
+        id:nextPlayerId++,nick,ws,stateWs:null,token,profile,profileDirty:false,
         zone:'lobby',x:150,y:270,vx:0,vy:0,hp:100,alive:true,
         ammo:WEAPONS[profile.weapon].mag,reload:0,fireCd:0,
         dashCd:0,dashTime:0,dashHeld:false,input:{dx:0,dy:0},
         facing:1,atCheckpointPrompt:false
       };
-      resetLobby(p);players.set(p.id,p);
-      send(ws,{type:'joined',id:p.id,profile:p.profile,serverTime:Date.now()});
+      resetLobby(p);players.set(p.id,p);sessions.set(token,p);
+      send(ws,{type:'joined',id:p.id,profile:p.profile,serverTime:Date.now(),stateToken:token});
       return;
     }
     if(!p)return;
@@ -311,7 +339,11 @@ wss.on('connection',ws=>{
     }
   });
 
-  ws.on('close',()=>{if(p)players.delete(p.id);});
+  ws.on('close',()=>{
+    if(!p)return;
+    players.delete(p.id);sessions.delete(p.token);
+    if(p.stateWs&&p.stateWs.readyState===WebSocket.OPEN){try{p.stateWs.close(1000,'control closed');}catch{}}
+  });
   ws.on('error',()=>{});
 });
 
@@ -432,18 +464,15 @@ setInterval(()=>{
   }
 },250);
 
-// Build each zone snapshot exactly once, then reuse the serialized payload for every socket.
+// Bulk world state is isolated on a second WebSocket so packet loss cannot head-of-line block input/ping/fire events.
 setInterval(()=>{
   const st=Date.now();
-  const lobby=zonePlayers('lobby');
-  if(lobby.length){
-    const msg=buildLobbySnapshot(st);
-    for(const p of lobby)if(p.ws.readyState===WebSocket.OPEN&&p.ws.bufferedAmount<SNAPSHOT_BACKPRESSURE)p.ws.send(msg);
-  }
-  const active=zonePlayers('dungeon');
-  if(active.length){
-    const msg=buildDungeonSnapshot(st);
-    for(const p of active)if(p.ws.readyState===WebSocket.OPEN&&p.ws.bufferedAmount<SNAPSHOT_BACKPRESSURE)p.ws.send(msg);
+  for(const p of players.values()){
+    const sw=p.stateWs;
+    if(!sw||sw.readyState!==WebSocket.OPEN)continue;
+    // Never queue stale world states. If the state socket is congested, skip this frame and send a fresh one next tick.
+    if(sw.bufferedAmount>SNAPSHOT_BACKPRESSURE)continue;
+    sw.send(buildSnapshotFor(p,st));
   }
 },SNAPSHOT_MS);
 
