@@ -121,7 +121,7 @@ function insideCheckpointDoor(p){
   return p.x>d.x-12&&p.x<d.x+d.w+12&&p.y>d.y-12&&p.y<d.y+d.h+12;
 }
 function playerView(p){
-  return {id:p.id,nick:p.nick,x:p.x,y:p.y,hp:p.hp,alive:p.alive,ammo:p.ammo,reload:p.reload,level:p.profile.level,skin:p.profile.skin};
+  return {id:p.id,nick:p.nick,x:p.x,y:p.y,hp:p.hp,alive:p.alive,ammo:p.ammo,reload:p.reload,level:p.profile.level,skin:p.profile.skin,moving:Math.abs(p.input.dx)>0.01||Math.abs(p.input.dy)>0.01};
 }
 function snapshotFor(p){
   if(p.zone==='lobby'){
