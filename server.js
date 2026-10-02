@@ -4,9 +4,12 @@ const path=require('path');
 const WebSocket=require('ws');
 
 const PORT=process.env.PORT||8080;
-const W=960,H=540,SIM_DT=1/60,SNAPSHOT_MS=33;
-let nextPlayerId=1,nextEnemyId=1;
+const VIEW_W=960,VIEW_H=540;
+const LOBBY={w:960,h:540,door:{x:865,y:190,w:55,h:160}};
+const DUNGEON={w:4800,h:2700};
+const SIM_DT=1/60,SNAPSHOT_MS=33;
 
+let nextPlayerId=1,nextEnemyId=1;
 const players=new Map();
 const dungeon={wave:1,enemies:new Map(),bullets:[],pickups:[]};
 
@@ -25,37 +28,72 @@ const server=http.createServer((req,res)=>{
 
 const wss=new WebSocket.Server({server,perMessageDeflate:false});
 const send=(ws,o)=>{if(ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify(o));};
-const eachPlayer=fn=>{for(const p of players.values())fn(p);};
-const broadcast=o=>{const s=JSON.stringify(o);eachPlayer(p=>{if(p.ws.readyState===WebSocket.OPEN)p.ws.send(s);});};
-const dungeonPlayers=()=>[...players.values()].filter(p=>p.zone==='dungeon');
+const zonePlayers=zone=>[...players.values()].filter(p=>p.zone===zone);
 
-function lobbyPayload(){
-  return {type:'lobby',players:[...players.values()].map(p=>({id:p.id,nick:p.nick,zone:p.zone}))};
+function cleanProfile(raw){
+  const r=raw&&typeof raw==='object'?raw:{};
+  return {
+    level:Math.max(1,Math.min(999,Number(r.level)||1)),
+    xp:Math.max(0,Number(r.xp)||0),
+    kills:Math.max(0,Number(r.kills)||0),
+    coins:Math.max(0,Number(r.coins)||0),
+    bestWave:Math.max(1,Number(r.bestWave)||1)
+  };
 }
-function broadcastLobby(){broadcast(lobbyPayload());}
-
-function spawnWave(){
-  dungeon.enemies.clear();dungeon.bullets=[];dungeon.pickups=[];
-  const count=Math.min(28,6+dungeon.wave*2);
-  for(let i=0;i<count;i++){
-    const side=Math.floor(Math.random()*4);let x,y;
-    if(side===0){x=55;y=55+Math.random()*(H-110)}
-    if(side===1){x=W-55;y=55+Math.random()*(H-110)}
-    if(side===2){x=55+Math.random()*(W-110);y=55}
-    if(side===3){x=55+Math.random()*(W-110);y=H-55}
-    const hp=28+dungeon.wave*5;
-    dungeon.enemies.set(nextEnemyId,{id:nextEnemyId++,x,y,hp,maxHp:hp,speed:44+dungeon.wave*1.5,type:Math.random()<.30?'shooter':'melee',shoot:.6+Math.random()*1.3});
+function profileThreshold(level){return 100+Math.max(0,level-1)*75;}
+function awardKill(p){
+  p.profile.kills++;
+  p.profile.coins+=2;
+  p.profile.xp+=20;
+  while(p.profile.xp>=profileThreshold(p.profile.level)){
+    p.profile.xp-=profileThreshold(p.profile.level);
+    p.profile.level++;
   }
+  send(p.ws,{type:'profile_update',profile:p.profile});
 }
-spawnWave();
-
-function resetPlayerForDungeon(p){
-  const offset=((p.id%7)-3)*24;
-  p.x=W/2+offset;p.y=H/2+((p.id%2)?22:-22);
+function awardWave(p,wave){
+  p.profile.bestWave=Math.max(p.profile.bestWave,wave);
+  p.profile.xp+=10;
+  while(p.profile.xp>=profileThreshold(p.profile.level)){
+    p.profile.xp-=profileThreshold(p.profile.level);
+    p.profile.level++;
+  }
+  send(p.ws,{type:'profile_update',profile:p.profile});
+}
+function resetLobby(p){
+  const n=(p.id%8);
+  p.zone='lobby';
+  p.x=135+(n%4)*46;
+  p.y=220+Math.floor(n/4)*54;
   p.hp=100;p.alive=true;p.ammo=8;p.reload=0;p.fireCd=0;p.dashCd=0;
   p.input={dx:0,dy:0,dash:false};
 }
-function damage(p,d){if(!p.alive)return;p.hp-=d;if(p.hp<=0){p.hp=0;p.alive=false;}}
+function resetDungeon(p){
+  p.zone='dungeon';
+  p.x=420+(p.id%6)*42;
+  p.y=DUNGEON.h/2+((p.id%5)-2)*46;
+  p.hp=100;p.alive=true;p.ammo=8;p.reload=0;p.fireCd=0;p.dashCd=0;
+  p.input={dx:0,dy:0,dash:false};
+}
+function spawnWave(){
+  dungeon.enemies.clear();dungeon.bullets=[];dungeon.pickups=[];
+  const count=Math.min(70,18+dungeon.wave*4);
+  for(let i=0;i<count;i++){
+    let x,y;
+    do{
+      x=500+Math.random()*(DUNGEON.w-650);
+      y=120+Math.random()*(DUNGEON.h-240);
+    }while(x<950&&Math.abs(y-DUNGEON.h/2)<420);
+    const hp=30+dungeon.wave*6;
+    dungeon.enemies.set(nextEnemyId,{
+      id:nextEnemyId++,x,y,hp,maxHp:hp,
+      speed:52+dungeon.wave*1.6,
+      type:Math.random()<.32?'shooter':'melee',
+      shoot:.7+Math.random()*1.3
+    });
+  }
+}
+spawnWave();
 
 function nearestAlive(e){
   let target=null,best=Infinity;
@@ -66,14 +104,32 @@ function nearestAlive(e){
   }
   return [target,best];
 }
-
-function snapshot(){
+function damage(p,d){
+  if(!p.alive)return;
+  p.hp-=d;
+  if(p.hp<=0){p.hp=0;p.alive=false;}
+}
+function insideDoor(p){
+  const d=LOBBY.door;
+  return p.x>d.x-10&&p.x<d.x+d.w+10&&p.y>d.y-10&&p.y<d.y+d.h+10;
+}
+function playerView(p){
+  return {id:p.id,nick:p.nick,x:p.x,y:p.y,hp:p.hp,alive:p.alive,ammo:p.ammo,reload:p.reload,level:p.profile.level};
+}
+function snapshotFor(p){
+  if(p.zone==='lobby'){
+    return {
+      type:'snapshot',zone:'lobby',world:{w:LOBBY.w,h:LOBBY.h},door:LOBBY.door,
+      players:zonePlayers('lobby').map(playerView),
+      enemies:[],bullets:[],pickups:[],wave:dungeon.wave
+    };
+  }
   return {
-    type:'snapshot',wave:dungeon.wave,
-    players:dungeonPlayers().map(p=>({id:p.id,nick:p.nick,x:p.x,y:p.y,hp:p.hp,alive:p.alive,ammo:p.ammo,reload:p.reload})),
+    type:'snapshot',zone:'dungeon',world:{w:DUNGEON.w,h:DUNGEON.h},
+    players:zonePlayers('dungeon').map(playerView),
     enemies:[...dungeon.enemies.values()].map(e=>({id:e.id,x:e.x,y:e.y,hp:e.hp,maxHp:e.maxHp,type:e.type})),
     bullets:dungeon.bullets.map(b=>({x:b.x,y:b.y,vx:b.vx,vy:b.vy,team:b.team})),
-    pickups:dungeon.pickups
+    pickups:dungeon.pickups,wave:dungeon.wave
   };
 }
 
@@ -85,28 +141,20 @@ wss.on('connection',ws=>{
     if(m.type==='join'){
       if(p)return;
       const nick=String(m.nick||'Player').trim().slice(0,16)||'Player';
-      p={id:nextPlayerId++,nick,ws,zone:'lobby',x:W/2,y:H/2,hp:100,alive:true,ammo:8,reload:0,fireCd:0,dashCd:0,input:{dx:0,dy:0,dash:false}};
+      p={
+        id:nextPlayerId++,nick,ws,
+        profile:cleanProfile(m.profile),
+        zone:'lobby',x:150,y:270,hp:100,alive:true,ammo:8,reload:0,fireCd:0,dashCd:0,
+        input:{dx:0,dy:0,dash:false}
+      };
+      resetLobby(p);
       players.set(p.id,p);
-      send(ws,{type:'joined',id:p.id});
-      send(ws,lobbyPayload());
-      broadcastLobby();
+      send(ws,{type:'joined',id:p.id,profile:p.profile});
       return;
     }
     if(!p)return;
 
-    if(m.type==='enter_dungeon'){
-      if(p.zone!=='dungeon'){
-        p.zone='dungeon';resetPlayerForDungeon(p);
-        send(ws,{type:'entered_dungeon',wave:dungeon.wave});
-        broadcastLobby();
-      }
-      return;
-    }
-    if(m.type==='leave_dungeon'){
-      p.zone='lobby';p.input={dx:0,dy:0,dash:false};broadcastLobby();send(ws,{type:'back_to_lobby'});return;
-    }
-
-    if(m.type==='input'&&p.zone==='dungeon'&&p.alive){
+    if(m.type==='input'&&p.alive){
       let dx=Number(m.dx)||0,dy=Number(m.dy)||0;
       const l=Math.hypot(dx,dy);
       if(l>1){dx/=l;dy/=l;}
@@ -118,70 +166,75 @@ wss.on('connection',ws=>{
       let dx=Number(m.dx)||0,dy=Number(m.dy)||0;
       const l=Math.hypot(dx,dy)||1;dx/=l;dy/=l;
       p.ammo--;p.fireCd=.15;
-      dungeon.bullets.push({x:p.x,y:p.y,vx:dx*900,vy:dy*900,life:1.15,team:'p',owner:p.id,dmg:15});
+      dungeon.bullets.push({x:p.x,y:p.y,vx:dx*900,vy:dy*900,life:1.5,team:'p',owner:p.id,dmg:15});
       return;
     }
     if(m.type==='reload'&&p.zone==='dungeon'&&p.reload<=0&&p.ammo<8)p.reload=.72;
-    if(m.type==='respawn'&&p.zone==='dungeon'&&!p.alive){p.hp=60;p.alive=true;p.x=W/2;p.y=H/2;}
+    if(m.type==='respawn'&&p.zone==='dungeon'&&!p.alive){p.hp=60;p.alive=true;p.x=420;p.y=DUNGEON.h/2;}
+    if(m.type==='return_lobby')resetLobby(p);
   });
 
-  ws.on('close',()=>{
-    if(!p)return;
-    players.delete(p.id);
-    broadcastLobby();
-  });
+  ws.on('close',()=>{if(p)players.delete(p.id);});
 });
 
 setInterval(()=>{
-  const active=dungeonPlayers();
-
-  for(const p of active){
+  for(const p of players.values()){
     p.fireCd=Math.max(0,p.fireCd-SIM_DT);
     p.dashCd=Math.max(0,p.dashCd-SIM_DT);
     if(p.reload>0){p.reload-=SIM_DT;if(p.reload<=0)p.ammo=8;}
     if(!p.alive)continue;
 
-    let speed=195;
-    if(p.input.dash&&p.dashCd<=0){speed=440;p.dashCd=1.05;}
-    p.x=Math.max(32,Math.min(W-32,p.x+p.input.dx*speed*SIM_DT));
-    p.y=Math.max(32,Math.min(H-32,p.y+p.input.dy*speed*SIM_DT));
+    const world=p.zone==='lobby'?LOBBY:DUNGEON;
+    let speed=p.zone==='lobby'?180:205;
+    if(p.input.dash&&p.dashCd<=0){speed=p.zone==='lobby'?330:460;p.dashCd=1.05;}
+    p.x=Math.max(32,Math.min(world.w-32,p.x+p.input.dx*speed*SIM_DT));
+    p.y=Math.max(32,Math.min(world.h-32,p.y+p.input.dy*speed*SIM_DT));
+
+    if(p.zone==='lobby'&&insideDoor(p)){
+      resetDungeon(p);
+      send(p.ws,{type:'entered_dungeon',wave:dungeon.wave});
+    }
   }
 
+  const active=zonePlayers('dungeon');
   if(active.length===0)return;
 
   for(const e of dungeon.enemies.values()){
     const [t,d]=nearestAlive(e);if(!t)continue;
     const dx=t.x-e.x,dy=t.y-e.y,l=Math.hypot(dx,dy)||1,nx=dx/l,ny=dy/l;
     if(e.type==='melee'){
-      if(d>25){e.x+=nx*e.speed*SIM_DT;e.y+=ny*e.speed*SIM_DT;}else damage(t,18*SIM_DT);
+      if(d>26){e.x+=nx*e.speed*SIM_DT;e.y+=ny*e.speed*SIM_DT;}
+      else damage(t,17*SIM_DT);
     }else{
-      if(d>190){e.x+=nx*e.speed*.65*SIM_DT;e.y+=ny*e.speed*.65*SIM_DT;}
-      if(d<135){e.x-=nx*e.speed*.55*SIM_DT;e.y-=ny*e.speed*.55*SIM_DT;}
+      if(d>260){e.x+=nx*e.speed*.70*SIM_DT;e.y+=ny*e.speed*.70*SIM_DT;}
+      if(d<180){e.x-=nx*e.speed*.55*SIM_DT;e.y-=ny*e.speed*.55*SIM_DT;}
       e.shoot-=SIM_DT;
-      if(e.shoot<=0&&d<370){
-        dungeon.bullets.push({x:e.x,y:e.y,vx:nx*320,vy:ny*320,life:2,team:'e',owner:e.id,dmg:10});
-        e.shoot=1+Math.random()*.9;
+      if(e.shoot<=0&&d<620){
+        dungeon.bullets.push({x:e.x,y:e.y,vx:nx*340,vy:ny*340,life:3,team:'e',owner:e.id,dmg:10});
+        e.shoot=.9+Math.random()*1.1;
       }
     }
   }
 
   for(const b of dungeon.bullets){
     b.x+=b.vx*SIM_DT;b.y+=b.vy*SIM_DT;b.life-=SIM_DT;
-    if(b.x<24||b.x>W-24||b.y<24||b.y>H-24)b.life=0;
+    if(b.x<20||b.x>DUNGEON.w-20||b.y<20||b.y>DUNGEON.h-20)b.life=0;
     if(b.team==='p'){
       for(const e of dungeon.enemies.values()){
-        if(Math.hypot(b.x-e.x,b.y-e.y)<15){
+        if(Math.hypot(b.x-e.x,b.y-e.y)<16){
           e.hp-=b.dmg;b.life=0;
           if(e.hp<=0){
             dungeon.enemies.delete(e.id);
-            if(Math.random()<.40)dungeon.pickups.push({x:e.x,y:e.y,type:Math.random()<.55?'ammo':'heal'});
+            const owner=players.get(b.owner);
+            if(owner)awardKill(owner);
+            if(Math.random()<.38)dungeon.pickups.push({x:e.x,y:e.y,type:Math.random()<.55?'ammo':'heal'});
           }
           break;
         }
       }
     }else{
       for(const p of active){
-        if(p.alive&&Math.hypot(b.x-p.x,b.y-p.y)<15){damage(p,b.dmg);b.life=0;break;}
+        if(p.alive&&Math.hypot(b.x-p.x,b.y-p.y)<16){damage(p,b.dmg);b.life=0;break;}
       }
     }
   }
@@ -190,7 +243,7 @@ setInterval(()=>{
   for(let i=dungeon.pickups.length-1;i>=0;i--){
     const pk=dungeon.pickups[i];let taken=false;
     for(const p of active){
-      if(p.alive&&Math.hypot(pk.x-p.x,pk.y-p.y)<22){
+      if(p.alive&&Math.hypot(pk.x-p.x,pk.y-p.y)<24){
         if(pk.type==='heal')p.hp=Math.min(100,p.hp+25);else p.ammo=Math.min(8,p.ammo+3);
         taken=true;break;
       }
@@ -200,16 +253,14 @@ setInterval(()=>{
 
   if(dungeon.enemies.size===0){
     dungeon.wave++;
-    for(const p of active){if(p.alive)p.hp=Math.min(100,p.hp+12);}
+    for(const p of active){if(p.alive)p.hp=Math.min(100,p.hp+15);awardWave(p,dungeon.wave);}
     spawnWave();
-    broadcast({type:'wave',wave:dungeon.wave});
+    for(const p of active)send(p.ws,{type:'wave',wave:dungeon.wave});
   }
 },1000*SIM_DT);
 
 setInterval(()=>{
-  if(dungeonPlayers().length===0)return;
-  const s=JSON.stringify(snapshot());
-  for(const p of players.values())if(p.zone==='dungeon'&&p.ws.readyState===WebSocket.OPEN)p.ws.send(s);
+  for(const p of players.values())send(p.ws,snapshotFor(p));
 },SNAPSHOT_MS);
 
-server.listen(PORT,'0.0.0.0',()=>console.log('Dungeon Blaster lobby server running on port '+PORT));
+server.listen(PORT,'0.0.0.0',()=>console.log('Dungeon Blaster immersive lobby server running on port '+PORT));
