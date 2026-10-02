@@ -150,9 +150,9 @@ setInterval(()=>{
   const dx=blocked?0:(keys.KeyD?1:0)-(keys.KeyA?1:0),dy=blocked?0:(keys.KeyS?1:0)-(keys.KeyW?1:0);
   const p=me();
   let facing=1;
-  if(p){const px=p.x-camera.x;facing=mouse.x<px?-1:1;}
+  if(p){const px=(localDraw.ready?localDraw.x:p.x)-camera.x;facing=mouse.x<px?-1:1;}
   ws.send(JSON.stringify({type:'input',dx,dy,dash:blocked?false:!!keys.Space,facing}));
-},16);
+},33);
 
 setInterval(()=>{
   if(!joined||zone!=='dungeon'||choiceOpen||!mouse.down||fireCd>0||!ws||ws.readyState!==1)return;
@@ -185,9 +185,10 @@ function drawPlayer(p,isMe,x,y){
 }
 function updateCamera(dt){
   const p=me();if(!p)return;
-  const targetX=Math.max(0,Math.min((snap.world?.w||W)-W,p.x-W/2));
-  const targetY=Math.max(0,Math.min((snap.world?.h||H)-H,p.y-H/2));
-  const a=1-Math.exp(-10*dt);
+  const px=localDraw.ready?localDraw.x:p.x,py=localDraw.ready?localDraw.y:p.y;
+  const targetX=Math.max(0,Math.min((snap.world?.w||W)-W,px-W/2));
+  const targetY=Math.max(0,Math.min((snap.world?.h||H)-H,py-H/2));
+  const a=1-Math.exp(-18*dt);
   camera.x=lerp(camera.x,targetX,a);camera.y=lerp(camera.y,targetY,a);
 }
 function drawLobby(){
@@ -245,8 +246,10 @@ function draw(dt){
         if(dx||dy){localDraw.x+=dx/l*sp*dt;localDraw.y+=dy/l*sp*dt;}
         const world=snap.world||{w:W,h:H};
         localDraw.x=Math.max(32,Math.min(world.w-32,localDraw.x));localDraw.y=Math.max(32,Math.min(world.h-32,localDraw.y));
-        const reconcile=1-Math.exp(-8*dt);
-        localDraw.x=lerp(localDraw.x,s.tx??localDraw.x,reconcile);localDraw.y=lerp(localDraw.y,s.ty??localDraw.y,reconcile);
+        const tx=s.tx??localDraw.x,ty=s.ty??localDraw.y;
+        const err=Math.hypot(tx-localDraw.x,ty-localDraw.y);
+        if(err>120){localDraw.x=tx;localDraw.y=ty;}
+        else if(err>10){const reconcile=1-Math.exp(-3.5*dt);localDraw.x=lerp(localDraw.x,tx,reconcile);localDraw.y=lerp(localDraw.y,ty,reconcile);}
         drawPlayer(s.data,true,localDraw.x,localDraw.y);
       }
     }else{
