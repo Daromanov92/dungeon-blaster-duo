@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="ru"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dungeon Blaster Duo</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;height:100%;background:#101014;color:#fff;font-family:Arial,sans-serif;overflow:hidden}
+body{display:grid;place-items:center}canvas{width:min(96vw,960px);height:auto;aspect-ratio:16/9;background:#17171d;border:4px solid #30303a;box-shadow:0 20px 60px #000;image-rendering:pixelated}
+#hud{position:fixed;left:16px;top:14px;font-size:14px;line-height:1.55;text-shadow:0 2px 2px #000}
+#help{position:fixed;right:16px;top:14px;text-align:right;font-size:13px;line-height:1.55;color:#bbb}
+#overlay{position:fixed;inset:0;background:rgba(8,8,12,.88);display:grid;place-items:center;z-index:10}
+.card{width:min(420px,90vw);background:#1b1b23;border:1px solid #393947;border-radius:16px;padding:28px;box-shadow:0 25px 80px #000}
+h1{margin:0 0 8px;font-size:30px}.sub{color:#aaaabd;margin:0 0 18px}
+input,button{width:100%;height:48px;border-radius:10px;font-size:16px}
+input{background:#111118;color:#fff;border:1px solid #3b3b48;padding:0 14px}
+button{margin-top:10px;border:0;background:#e0b449;color:#1a160d;font-weight:800;cursor:pointer}
+button:disabled{opacity:.5}.status{margin-top:14px;color:#d0d0da;min-height:22px}
+#toast{position:fixed;left:50%;top:16px;transform:translateX(-50%);background:#22242d;border:1px solid #444956;padding:8px 14px;border-radius:9px;display:none}
+</style></head><body>
+<canvas id="game" width="960" height="540"></canvas>
+<div id="hud"></div><div id="help">WASD — движение<br>ЛКМ — стрелять<br>R — перезарядка<br>Space — рывок</div><div id="toast"></div>
+<div id="overlay"><div class="card"><h1>Dungeon Blaster Duo</h1><div class="sub">Введите ник. Игра автоматически соединит вас со вторым игроком.</div><input id="nick" maxlength="16" placeholder="Ник"><button id="play">Играть</button><div id="status" class="status">Подключение...</div></div></div>
+<script>
+const c=document.getElementById('game'),ctx=c.getContext('2d'),hud=document.getElementById('hud');
+const overlay=document.getElementById('overlay'),nick=document.getElementById('nick'),play=document.getElementById('play'),statusEl=document.getElementById('status'),toast=document.getElementById('toast');
+ctx.imageSmoothingEnabled=false;
+const W=960,H=540,keys={},mouse={x:W/2,y:H/2,down:false};
+let ws,myId=null,joined=false,started=false,snap={players:[],enemies:[],bullets:[],pickups:[],wave:1},fireCd=0,last=performance.now();
+
+function rect(x,y,w,h,col){ctx.fillStyle=col;ctx.fillRect(Math.round(x),Math.round(y),Math.round(w),Math.round(h))}
+function norm(x,y){const l=Math.hypot(x,y)||1;return[x/l,y/l]}
+function me(){return snap.players.find(p=>p.id===myId)}
+function note(t){toast.textContent=t;toast.style.display='block';setTimeout(()=>toast.style.display='none',1400)}
+function connect(){
+  ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host);
+  ws.onopen=()=>statusEl.textContent='Сервер подключен';
+  ws.onclose=()=>{statusEl.textContent='Соединение потеряно';started=false;setTimeout(connect,1500)};
+  ws.onmessage=e=>{
+    const m=JSON.parse(e.data);
+    if(m.type==='joined'){myId=m.id;joined=true;statusEl.textContent='Ждём второго игрока...'}
+    if(m.type==='lobby')statusEl.textContent=m.players.length<2?'Ждём второго игрока...':'Игрок найден';
+    if(m.type==='game_start'){started=true;overlay.style.display='none';note('Напарник подключён')}
+    if(m.type==='snapshot')snap=m;
+    if(m.type==='wave')note('Волна '+m.wave);
+    if(m.type==='partner_left'){started=false;overlay.style.display='grid';statusEl.textContent='Напарник вышел. Ждём нового игрока...'}
+    if(m.type==='gameover'){started=false;overlay.style.display='grid';statusEl.innerHTML='Поражение.<button id="restart">Начать заново</button>';setTimeout(()=>{const b=document.getElementById('restart');if(b)b.onclick=()=>{ws.send(JSON.stringify({type:'restart'}));statusEl.textContent='Перезапуск...'}},0);}
+  };
+}
+connect();
+play.onclick=()=>{const n=nick.value.trim();if(!n){statusEl.textContent='Введите ник';return}if(!ws||ws.readyState!==1){statusEl.textContent='Нет соединения с сервером';return}if(!joined)ws.send(JSON.stringify({type:'join',nick:n}));nick.disabled=true;play.disabled=true;};
+nick.addEventListener('keydown',e=>{if(e.key==='Enter')play.click()});
+addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='KeyR'&&ws&&ws.readyState===1)ws.send(JSON.stringify({type:'reload'}))});
+addEventListener('keyup',e=>keys[e.code]=false);
+c.addEventListener('mousemove',e=>{const r=c.getBoundingClientRect();mouse.x=(e.clientX-r.left)*W/r.width;mouse.y=(e.clientY-r.top)*H/r.height});
+c.addEventListener('mousedown',()=>mouse.down=true);addEventListener('mouseup',()=>mouse.down=false);
+setInterval(()=>{if(!started||!ws||ws.readyState!==1)return;const dx=(keys.KeyD?1:0)-(keys.KeyA?1:0),dy=(keys.KeyS?1:0)-(keys.KeyW?1:0);ws.send(JSON.stringify({type:'input',dx,dy,dash:!!keys.Space}));if(mouse.down&&fireCd<=0){const p=me();if(p){const[d1,d2]=norm(mouse.x-p.x,mouse.y-p.y);ws.send(JSON.stringify({type:'shoot',dx:d1,dy:d2}));fireCd=.16}}},1000/30);
+function drawPlayer(p,isMe){const col=isMe?'#e8e8ed':'#63c9ff';rect(p.x-11,p.y-11,22,22,col);rect(p.x-8,p.y-8,16,5,'#fff');rect(p.x-4,p.y-1,3,5,'#202028');rect(p.x+3,p.y-1,3,5,'#202028');ctx.fillStyle='#fff';ctx.font='12px Arial';ctx.textAlign='center';ctx.fillText(p.nick,p.x,p.y-18);rect(p.x-14,p.y+16,28,3,'#472327');rect(p.x-14,p.y+16,28*(p.hp/100),3,'#62d26f')}
+function draw(){rect(0,0,W,H,'#17171d');for(let y=28;y<H-28;y+=32)for(let x=28;x<W-28;x+=32)rect(x,y,31,31,((x+y)/32)%2?'#202028':'#1d1d25');rect(0,0,W,26,'#494956');rect(0,H-26,W,26,'#494956');rect(0,0,26,H,'#494956');rect(W-26,0,26,H,'#494956');for(const pk of snap.pickups||[])rect(pk.x-6,pk.y-6,12,12,pk.type==='heal'?'#74df7d':'#71d4ff');for(const e of snap.enemies||[]){rect(e.x-10,e.y-10,20,20,e.type==='melee'?'#c84e54':'#8d66d9');rect(e.x-9,e.y-16,18,3,'#402126');rect(e.x-9,e.y-16,18*(e.hp/e.maxHp),3,'#f05b63')}for(const p of snap.players||[])drawPlayer(p,p.id===myId);for(const b of snap.bullets||[])rect(b.x-3,b.y-3,6,6,b.team==='p'?'#ffd65c':'#ff6767');const p=me();hud.innerHTML=p?`Волна: ${snap.wave}<br>${p.nick}: HP ${Math.ceil(p.hp)} / 100<br>Патроны: ${p.ammo}/8${p.reload>0?' — перезарядка':''}`:`Волна: ${snap.wave}`;}
+function loop(t){const dt=Math.min(.033,(t-last)/1000);last=t;fireCd=Math.max(0,fireCd-dt);draw();requestAnimationFrame(loop)}
+requestAnimationFrame(loop);
+</script></body></html>
