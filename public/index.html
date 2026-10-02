@@ -15,9 +15,13 @@ input{background:#111118;color:#fff;border:1px solid #3b3b48;padding:0 14px}
 button{margin-top:10px;border:0;background:#e0b449;color:#1a160d;font-weight:800;cursor:pointer}
 .status{margin-top:14px;color:#d0d0da;min-height:22px}
 #toast{position:fixed;left:50%;top:16px;transform:translateX(-50%);background:#22242d;border:1px solid #444956;padding:8px 14px;border-radius:9px;display:none;z-index:20}
+#choice{position:fixed;inset:0;background:rgba(8,8,12,.72);display:none;place-items:center;z-index:15}
+.choiceButtons{display:grid;grid-template-columns:1fr 1fr;gap:10px}.choiceButtons button{margin-top:0}.secondary{background:#353541;color:#fff}
 </style></head><body>
 <canvas id="game" width="960" height="540"></canvas>
 <div id="hud"></div><div id="help">WASD — движение<br>ЛКМ — стрелять<br>R — перезарядка<br>Space — рывок</div><div id="toast"></div>
+
+<div id="choice"><div class="card"><h1>Три волны пройдены</h1><div class="sub">Вернуться в хаб или продолжить следующие 3 волны?</div><div class="choiceButtons"><button id="hubBtn" class="secondary">ВЕРНУТЬСЯ В ХАБ</button><button id="continueBtn">ПРОДОЛЖИТЬ</button></div></div></div>
 
 <div id="login"><div class="card">
 <h1>Dungeon Blaster</h1>
@@ -30,10 +34,11 @@ button{margin-top:10px;border:0;background:#e0b449;color:#1a160d;font-weight:800
 <script>
 const c=document.getElementById('game'),ctx=c.getContext('2d'),hud=document.getElementById('hud');
 const login=document.getElementById('login'),nick=document.getElementById('nick'),play=document.getElementById('play'),loginStatus=document.getElementById('loginStatus'),toast=document.getElementById('toast');
+const choice=document.getElementById('choice'),hubBtn=document.getElementById('hubBtn'),continueBtn=document.getElementById('continueBtn');
 ctx.imageSmoothingEnabled=false;
 
 const W=960,H=540,keys={},mouse={x:W/2,y:H/2,down:false};
-let ws,myId=null,joined=false,zone='lobby',fireCd=0,last=performance.now(),profile={level:1,xp:0,kills:0,coins:0,bestWave:1};
+let ws,myId=null,joined=false,zone='lobby',fireCd=0,last=performance.now(),choiceOpen=false,profile={level:1,xp:0,kills:0,coins:0,bestWave:1};
 let snap={players:[],enemies:[],bullets:[],pickups:[],wave:1,world:{w:960,h:540}};
 const smoothPlayers=new Map(),smoothEnemies=new Map();
 let localDraw={x:150,y:270,ready:false};
@@ -73,6 +78,10 @@ function connect(){
     }
     if(m.type==='profile_update'){profile=m.profile;saveProfile();}
     if(m.type==='entered_dungeon'){zone='dungeon';localDraw.ready=false;smoothPlayers.clear();smoothEnemies.clear();note('Вы вошли в данж');}
+    if(m.type==='back_to_hub'){zone='lobby';choiceOpen=false;choice.style.display='none';localDraw.ready=false;smoothPlayers.clear();smoothEnemies.clear();note('Вы вернулись в хаб');}
+    if(m.type==='checkpoint_ready')note('3 волны пройдены — появилась дверь');
+    if(m.type==='checkpoint_choice'){choiceOpen=true;choice.style.display='grid';}
+    if(m.type==='checkpoint_closed'){choiceOpen=false;choice.style.display='none';}
     if(m.type==='wave')note('Волна '+m.wave);
     if(m.type==='snapshot'){
       zone=m.zone;snap=m;
@@ -101,6 +110,8 @@ play.onclick=()=>{
   ws.send(JSON.stringify({type:'join',nick:n,profile}));
 };
 nick.addEventListener('keydown',e=>{if(e.key==='Enter')play.click()});
+hubBtn.onclick=()=>{if(ws&&ws.readyState===1){ws.send(JSON.stringify({type:'checkpoint_action',action:'hub'}));choiceOpen=false;choice.style.display='none';}};
+continueBtn.onclick=()=>{if(ws&&ws.readyState===1){ws.send(JSON.stringify({type:'checkpoint_action',action:'continue'}));choiceOpen=false;choice.style.display='none';}};
 
 addEventListener('keydown',e=>{
   keys[e.code]=true;
@@ -112,12 +123,12 @@ c.addEventListener('mousedown',()=>mouse.down=true);addEventListener('mouseup',(
 
 setInterval(()=>{
   if(!joined||!ws||ws.readyState!==1)return;
-  const dx=(keys.KeyD?1:0)-(keys.KeyA?1:0),dy=(keys.KeyS?1:0)-(keys.KeyW?1:0);
-  ws.send(JSON.stringify({type:'input',dx,dy,dash:!!keys.Space}));
+  const dx=choiceOpen?0:(keys.KeyD?1:0)-(keys.KeyA?1:0),dy=choiceOpen?0:(keys.KeyS?1:0)-(keys.KeyW?1:0);
+  ws.send(JSON.stringify({type:'input',dx,dy,dash:choiceOpen?false:!!keys.Space}));
 },16);
 
 setInterval(()=>{
-  if(!joined||zone!=='dungeon'||!mouse.down||fireCd>0||!ws||ws.readyState!==1)return;
+  if(!joined||zone!=='dungeon'||choiceOpen||!mouse.down||fireCd>0||!ws||ws.readyState!==1)return;
   const p=me();if(!p)return;
   const wx=mouse.x+camera.x,wy=mouse.y+camera.y;
   const[d1,d2]=norm(wx-p.x,wy-p.y);
@@ -159,6 +170,12 @@ function drawDungeon(){
   }
   rect(sx(0),sy(0),w,26,'#464853');rect(sx(0),sy(h-26),w,26,'#464853');
   rect(sx(0),sy(0),26,h,'#464853');rect(sx(w-26),sy(0),26,h,'#464853');
+  if(snap.checkpoint&&snap.checkpointDoor){
+    const d=snap.checkpointDoor,X=sx(d.x),Y=sy(d.y);
+    rect(X,Y,d.w,d.h,'#25191d');rect(X+10,Y+12,d.w-20,d.h-24,'#8d4b35');
+    rect(X+28,Y+18,8,d.h-36,'#e1b45f');
+    ctx.fillStyle='#f0d39a';ctx.font='13px Arial';ctx.textAlign='center';ctx.fillText('ВЫХОД',X+d.w/2,Y-10);
+  }
 }
 function draw(dt){
   updateCamera(dt);
@@ -198,7 +215,7 @@ function draw(dt){
   const p=me();
   hud.innerHTML=p?
     'Профиль: '+esc(p.nick)+'<br>Уровень: '+profile.level+' ('+Math.floor(profile.xp)+'/'+threshold(profile.level)+' XP)<br>Убийства: '+profile.kills+' · Монеты: '+profile.coins+
-    (zone==='dungeon'?'<br>Волна: '+snap.wave+' · HP '+Math.ceil(p.hp)+'/100 · Патроны '+p.ammo+'/8':'<br><span style="color:#e0b449">Идите к двери справа →</span>'):
+    (zone==='dungeon'?'<br>Волна: '+snap.wave+' · HP '+Math.ceil(p.hp)+'/100 · Патроны '+p.ammo+'/8'+(snap.checkpoint?'<br><span style="color:#e0b449">Открылась дверь выхода</span>':''):'<br><span style="color:#e0b449">Идите к двери справа →</span>'):
     '';
 }
 function loop(t){const dt=Math.min(.033,(t-last)/1000);last=t;fireCd=Math.max(0,fireCd-dt);draw(dt);requestAnimationFrame(loop)}
