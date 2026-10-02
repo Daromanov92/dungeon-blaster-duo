@@ -7,79 +7,75 @@
 body{display:grid;place-items:center}canvas{width:min(96vw,960px);height:auto;aspect-ratio:16/9;background:#17171d;border:4px solid #30303a;box-shadow:0 20px 60px #000;image-rendering:pixelated}
 #hud{position:fixed;left:16px;top:14px;font-size:14px;line-height:1.55;text-shadow:0 2px 2px #000;pointer-events:none}
 #help{position:fixed;right:16px;top:14px;text-align:right;font-size:13px;line-height:1.55;color:#bbb;pointer-events:none}
-.layer{position:fixed;inset:0;background:rgba(8,8,12,.9);display:grid;place-items:center;z-index:10}
-.card{width:min(470px,92vw);background:#1b1b23;border:1px solid #393947;border-radius:16px;padding:28px;box-shadow:0 25px 80px #000}
+#login{position:fixed;inset:0;background:rgba(8,8,12,.92);display:grid;place-items:center;z-index:10}
+.card{width:min(430px,92vw);background:#1b1b23;border:1px solid #393947;border-radius:16px;padding:28px;box-shadow:0 25px 80px #000}
 h1{margin:0 0 8px;font-size:30px}.sub{color:#aaaabd;margin:0 0 18px}
 input,button{width:100%;height:48px;border-radius:10px;font-size:16px}
 input{background:#111118;color:#fff;border:1px solid #3b3b48;padding:0 14px}
 button{margin-top:10px;border:0;background:#e0b449;color:#1a160d;font-weight:800;cursor:pointer}
-button.secondary{background:#343441;color:#fff}.status{margin-top:14px;color:#d0d0da;min-height:22px}
-.players{margin:16px 0;background:#121219;border:1px solid #30303b;border-radius:10px;padding:10px;max-height:180px;overflow:auto}
-.p{display:flex;justify-content:space-between;padding:7px 6px;border-bottom:1px solid #262630}.p:last-child{border:0}.tag{color:#8bd6ff}
+.status{margin-top:14px;color:#d0d0da;min-height:22px}
 #toast{position:fixed;left:50%;top:16px;transform:translateX(-50%);background:#22242d;border:1px solid #444956;padding:8px 14px;border-radius:9px;display:none;z-index:20}
-#lobby{display:none}
 </style></head><body>
 <canvas id="game" width="960" height="540"></canvas>
 <div id="hud"></div><div id="help">WASD — движение<br>ЛКМ — стрелять<br>R — перезарядка<br>Space — рывок</div><div id="toast"></div>
 
-<div id="login" class="layer"><div class="card">
-<h1>Dungeon Blaster</h1><div class="sub">Введите ник и сразу попадёте в общую комнату.</div>
-<input id="nick" maxlength="16" placeholder="Ник"><button id="play">Войти</button><div id="loginStatus" class="status">Подключение...</div>
-</div></div>
-
-<div id="lobby" class="layer"><div class="card">
-<h1>Лобби</h1><div class="sub">Игроки могут заходить и выходить из данжа независимо друг от друга.</div>
-<div id="players" class="players"></div>
-<button id="enter">ВОЙТИ В ДАНЖИК</button>
-<div id="lobbyStatus" class="status"></div>
+<div id="login"><div class="card">
+<h1>Dungeon Blaster</h1>
+<div class="sub">Введите ник. Этот ник станет вашим локальным профилем: уровень и прогресс будут сохраняться в этом браузере.</div>
+<input id="nick" maxlength="16" placeholder="Ник">
+<button id="play">ВОЙТИ</button>
+<div id="loginStatus" class="status">Подключение...</div>
 </div></div>
 
 <script>
 const c=document.getElementById('game'),ctx=c.getContext('2d'),hud=document.getElementById('hud');
-const login=document.getElementById('login'),lobby=document.getElementById('lobby'),nick=document.getElementById('nick'),play=document.getElementById('play');
-const loginStatus=document.getElementById('loginStatus'),playersEl=document.getElementById('players'),enter=document.getElementById('enter'),lobbyStatus=document.getElementById('lobbyStatus'),toast=document.getElementById('toast');
+const login=document.getElementById('login'),nick=document.getElementById('nick'),play=document.getElementById('play'),loginStatus=document.getElementById('loginStatus'),toast=document.getElementById('toast');
 ctx.imageSmoothingEnabled=false;
 
 const W=960,H=540,keys={},mouse={x:W/2,y:H/2,down:false};
-let ws,myId=null,joined=false,inDungeon=false,fireCd=0,last=performance.now();
-let snap={players:[],enemies:[],bullets:[],pickups:[],wave:1};
+let ws,myId=null,joined=false,zone='lobby',fireCd=0,last=performance.now(),profile={level:1,xp:0,kills:0,coins:0,bestWave:1};
+let snap={players:[],enemies:[],bullets:[],pickups:[],wave:1,world:{w:960,h:540}};
 const smoothPlayers=new Map(),smoothEnemies=new Map();
-let localDraw={x:W/2,y:H/2,ready:false};
+let localDraw={x:150,y:270,ready:false};
+let camera={x:0,y:0};
 
 function rect(x,y,w,h,col){ctx.fillStyle=col;ctx.fillRect(Math.round(x),Math.round(y),Math.round(w),Math.round(h))}
 function norm(x,y){const l=Math.hypot(x,y)||1;return[x/l,y/l]}
-function me(){return snap.players.find(p=>p.id===myId)}
-function note(t){toast.textContent=t;toast.style.display='block';clearTimeout(note.t);note.t=setTimeout(()=>toast.style.display='none',1300)}
 function lerp(a,b,t){return a+(b-a)*t}
-
-function showLobby(){
-  inDungeon=false;login.style.display='none';lobby.style.display='grid';hud.innerHTML='';
+function me(){return snap.players.find(p=>p.id===myId)}
+function esc(s){return String(s).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch]))}
+function note(t){toast.textContent=t;toast.style.display='block';clearTimeout(note.t);note.t=setTimeout(()=>toast.style.display='none',1400)}
+function keyFor(n){return 'dungeon_blaster_profile_'+n.trim().toLowerCase();}
+function loadProfile(n){
+  try{
+    const raw=localStorage.getItem(keyFor(n));
+    if(raw)return Object.assign({level:1,xp:0,kills:0,coins:0,bestWave:1},JSON.parse(raw));
+  }catch{}
+  return {level:1,xp:0,kills:0,coins:0,bestWave:1};
 }
-function renderLobby(list){
-  playersEl.innerHTML=list.map(p=>'<div class="p"><span>'+escapeHtml(p.nick)+'</span><span class="tag">'+(p.zone==='dungeon'?'В данже':'В лобби')+'</span></div>').join('')||'<div>Пока никого нет</div>';
-  lobbyStatus.textContent='Онлайн: '+list.length;
+function saveProfile(){
+  const n=nick.value.trim();if(!n)return;
+  try{localStorage.setItem(keyFor(n),JSON.stringify(profile));}catch{}
 }
-function escapeHtml(s){return String(s).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch]))}
+function threshold(l){return 100+Math.max(0,l-1)*75;}
 
 function connect(){
   ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host);
   ws.onopen=()=>loginStatus.textContent='Сервер подключен';
   ws.onclose=()=>{
-    loginStatus.textContent='Соединение потеряно. Переподключение...';
-    inDungeon=false;joined=false;myId=null;
-    login.style.display='grid';lobby.style.display='none';
+    joined=false;myId=null;login.style.display='grid';loginStatus.textContent='Соединение потеряно. Переподключение...';
     setTimeout(connect,1200);
   };
   ws.onmessage=e=>{
     const m=JSON.parse(e.data);
-    if(m.type==='joined'){myId=m.id;joined=true;showLobby();}
-    if(m.type==='lobby')renderLobby(m.players);
-    if(m.type==='entered_dungeon'){
-      inDungeon=true;lobby.style.display='none';login.style.display='none';note('Данжик: волна '+m.wave);
+    if(m.type==='joined'){
+      myId=m.id;joined=true;profile=m.profile||profile;saveProfile();login.style.display='none';note('Добро пожаловать');
     }
-    if(m.type==='back_to_lobby')showLobby();
+    if(m.type==='profile_update'){profile=m.profile;saveProfile();}
+    if(m.type==='entered_dungeon'){zone='dungeon';localDraw.ready=false;smoothPlayers.clear();smoothEnemies.clear();note('Вы вошли в данж');}
+    if(m.type==='wave')note('Волна '+m.wave);
     if(m.type==='snapshot'){
-      snap=m;
+      zone=m.zone;snap=m;
       for(const p of m.players){
         const s=smoothPlayers.get(p.id)||{x:p.x,y:p.y};
         s.tx=p.x;s.ty=p.y;s.data=p;smoothPlayers.set(p.id,s);
@@ -93,7 +89,6 @@ function connect(){
       for(const id of smoothPlayers.keys())if(!pids.has(id))smoothPlayers.delete(id);
       for(const id of smoothEnemies.keys())if(!eids.has(id))smoothEnemies.delete(id);
     }
-    if(m.type==='wave')note('Волна '+m.wave);
   };
 }
 connect();
@@ -101,78 +96,111 @@ connect();
 play.onclick=()=>{
   const n=nick.value.trim();
   if(!n){loginStatus.textContent='Введите ник';return;}
-  if(!ws||ws.readyState!==1){loginStatus.textContent='Нет соединения с сервером';return;}
-  if(!joined)ws.send(JSON.stringify({type:'join',nick:n}));
+  if(!ws||ws.readyState!==1){loginStatus.textContent='Нет соединения';return;}
+  profile=loadProfile(n);
+  ws.send(JSON.stringify({type:'join',nick:n,profile}));
 };
 nick.addEventListener('keydown',e=>{if(e.key==='Enter')play.click()});
-enter.onclick=()=>{if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'enter_dungeon'}));};
 
 addEventListener('keydown',e=>{
   keys[e.code]=true;
-  if(e.code==='KeyR'&&inDungeon&&ws&&ws.readyState===1)ws.send(JSON.stringify({type:'reload'}));
-  if(e.code==='Escape'&&inDungeon&&ws&&ws.readyState===1)ws.send(JSON.stringify({type:'leave_dungeon'}));
+  if(e.code==='KeyR'&&zone==='dungeon'&&ws&&ws.readyState===1)ws.send(JSON.stringify({type:'reload'}));
 });
 addEventListener('keyup',e=>keys[e.code]=false);
 c.addEventListener('mousemove',e=>{const r=c.getBoundingClientRect();mouse.x=(e.clientX-r.left)*W/r.width;mouse.y=(e.clientY-r.top)*H/r.height});
 c.addEventListener('mousedown',()=>mouse.down=true);addEventListener('mouseup',()=>mouse.down=false);
 
 setInterval(()=>{
-  if(!inDungeon||!ws||ws.readyState!==1)return;
+  if(!joined||!ws||ws.readyState!==1)return;
   const dx=(keys.KeyD?1:0)-(keys.KeyA?1:0),dy=(keys.KeyS?1:0)-(keys.KeyW?1:0);
   ws.send(JSON.stringify({type:'input',dx,dy,dash:!!keys.Space}));
 },16);
 
 setInterval(()=>{
-  if(!inDungeon||!mouse.down||fireCd>0||!ws||ws.readyState!==1)return;
+  if(!joined||zone!=='dungeon'||!mouse.down||fireCd>0||!ws||ws.readyState!==1)return;
   const p=me();if(!p)return;
-  const[d1,d2]=norm(mouse.x-p.x,mouse.y-p.y);
+  const wx=mouse.x+camera.x,wy=mouse.y+camera.y;
+  const[d1,d2]=norm(wx-p.x,wy-p.y);
   ws.send(JSON.stringify({type:'shoot',dx:d1,dy:d2}));fireCd=.15;
 },20);
 
+function sx(x){return x-camera.x}function sy(y){return y-camera.y}
 function drawPlayer(p,isMe,x,y){
-  const col=isMe?'#e8e8ed':'#63c9ff';
-  rect(x-11,y-11,22,22,col);rect(x-8,y-8,16,5,'#fff');
-  rect(x-4,y-1,3,5,'#202028');rect(x+3,y-1,3,5,'#202028');
-  ctx.fillStyle='#fff';ctx.font='12px Arial';ctx.textAlign='center';ctx.fillText(p.nick,x,y-18);
-  rect(x-14,y+16,28,3,'#472327');rect(x-14,y+16,28*(p.hp/100),3,'#62d26f');
+  const X=sx(x),Y=sy(y),col=isMe?'#eeeef3':'#63c9ff';
+  rect(X-11,Y-11,22,22,col);rect(X-8,Y-8,16,5,'#fff');
+  rect(X-4,Y-1,3,5,'#202028');rect(X+3,Y-1,3,5,'#202028');
+  ctx.fillStyle='#fff';ctx.font='12px Arial';ctx.textAlign='center';ctx.fillText(p.nick+'  Lv.'+p.level,X,Y-18);
+  rect(X-14,Y+16,28,3,'#472327');rect(X-14,Y+16,28*(p.hp/100),3,'#62d26f');
+}
+function updateCamera(dt){
+  const p=me();if(!p)return;
+  const targetX=Math.max(0,Math.min((snap.world?.w||W)-W,p.x-W/2));
+  const targetY=Math.max(0,Math.min((snap.world?.h||H)-H,p.y-H/2));
+  const a=1-Math.exp(-10*dt);
+  camera.x=lerp(camera.x,targetX,a);camera.y=lerp(camera.y,targetY,a);
+}
+function drawLobby(){
+  rect(0,0,W,H,'#18181e');
+  for(let y=0;y<H;y+=32)for(let x=0;x<W;x+=32)rect(x,y,31,31,((x+y)/32)%2?'#22222b':'#1e1e26');
+  rect(0,0,W,28,'#4a4a56');rect(0,H-28,W,28,'#4a4a56');rect(0,0,28,H,'#4a4a56');rect(W-28,0,28,H,'#4a4a56');
+  rect(90,120,250,300,'#24242d');rect(104,135,222,270,'#2d2d36');
+  ctx.fillStyle='#aaa';ctx.font='14px Arial';ctx.textAlign='center';ctx.fillText('СТАРТОВАЯ КОМНАТА',215,110);
+  const d=snap.door||{x:865,y:190,w:55,h:160};
+  rect(d.x,d.y,d.w,d.h,'#2a1719');rect(d.x+8,d.y+10,d.w-16,d.h-20,'#7b4231');
+  rect(d.x+20,d.y+16,7,d.h-32,'#d0a65b');
+  ctx.fillStyle='#f0d39a';ctx.font='12px Arial';ctx.fillText('ДАНЖ',d.x+d.w/2,d.y-10);
+}
+function drawDungeon(){
+  const w=snap.world?.w||4800,h=snap.world?.h||2700;
+  rect(0,0,W,H,'#111217');
+  const tile=48,startX=Math.floor(camera.x/tile)*tile,startY=Math.floor(camera.y/tile)*tile;
+  for(let y=startY;y<camera.y+H+tile;y+=tile)for(let x=startX;x<camera.x+W+tile;x+=tile){
+    rect(sx(x),sy(y),tile-1,tile-1,((x/tile+y/tile)&1)?'#1a1b22':'#17181f');
+  }
+  rect(sx(0),sy(0),w,26,'#464853');rect(sx(0),sy(h-26),w,26,'#464853');
+  rect(sx(0),sy(0),26,h,'#464853');rect(sx(w-26),sy(0),26,h,'#464853');
 }
 function draw(dt){
-  rect(0,0,W,H,'#17171d');
-  for(let y=28;y<H-28;y+=32)for(let x=28;x<W-28;x+=32)rect(x,y,31,31,((x+y)/32)%2?'#202028':'#1d1d25');
-  rect(0,0,W,26,'#494956');rect(0,H-26,W,26,'#494956');rect(0,0,26,H,'#494956');rect(W-26,0,26,H,'#494956');
+  updateCamera(dt);
+  if(zone==='lobby'){camera.x=0;camera.y=0;drawLobby();}else drawDungeon();
 
-  if(inDungeon){
-    const enemyBlend=1-Math.exp(-18*dt),playerBlend=1-Math.exp(-24*dt);
+  const enemyBlend=1-Math.exp(-20*dt),playerBlend=1-Math.exp(-25*dt);
+  if(zone==='dungeon'){
     for(const s of smoothEnemies.values()){
       s.x=lerp(s.x,s.tx??s.x,enemyBlend);s.y=lerp(s.y,s.ty??s.y,enemyBlend);
-      const e=s.data;if(!e)continue;
-      rect(s.x-10,s.y-10,20,20,e.type==='melee'?'#c84e54':'#8d66d9');
-      rect(s.x-9,s.y-16,18,3,'#402126');rect(s.x-9,s.y-16,18*(e.hp/e.maxHp),3,'#f05b63');
+      const e=s.data;if(!e)continue;const X=sx(s.x),Y=sy(s.y);
+      if(X<-40||X>W+40||Y<-40||Y>H+40)continue;
+      rect(X-10,Y-10,20,20,e.type==='melee'?'#c84e54':'#8d66d9');
+      rect(X-9,Y-16,18,3,'#402126');rect(X-9,Y-16,18*(e.hp/e.maxHp),3,'#f05b63');
     }
-    for(const pk of snap.pickups||[])rect(pk.x-6,pk.y-6,12,12,pk.type==='heal'?'#74df7d':'#71d4ff');
-    for(const s of smoothPlayers.values()){
-      if(s.data&&s.data.id===myId){
-        const dx=(keys.KeyD?1:0)-(keys.KeyA?1:0),dy=(keys.KeyS?1:0)-(keys.KeyW?1:0),l=Math.hypot(dx,dy)||1;
-        if(localDraw.ready){
-          const sp=keys.Space?440:195;
-          if(dx||dy){localDraw.x+=dx/l*sp*dt;localDraw.y+=dy/l*sp*dt;}
-          localDraw.x=Math.max(32,Math.min(W-32,localDraw.x));localDraw.y=Math.max(32,Math.min(H-32,localDraw.y));
-          const reconcile=1-Math.exp(-7*dt);
-          localDraw.x=lerp(localDraw.x,s.tx??localDraw.x,reconcile);localDraw.y=lerp(localDraw.y,s.ty??localDraw.y,reconcile);
-          drawPlayer(s.data,true,localDraw.x,localDraw.y);
-        }
-      }else{
-        s.x=lerp(s.x,s.tx??s.x,playerBlend);s.y=lerp(s.y,s.ty??s.y,playerBlend);
-        if(s.data)drawPlayer(s.data,false,s.x,s.y);
-      }
-    }
-    for(const b of snap.bullets||[])rect(b.x-3,b.y-3,6,6,b.team==='p'?'#ffd65c':'#ff6767');
-    const p=me();
-    hud.innerHTML=p?'Волна: '+snap.wave+'<br>'+escapeHtml(p.nick)+': HP '+Math.ceil(p.hp)+' / 100<br>Патроны: '+p.ammo+'/8'+(p.reload>0?' — перезарядка':'')+'<br><span style="color:#aaa">Esc — в лобби</span>':'Волна: '+snap.wave;
+    for(const pk of snap.pickups||[]){const X=sx(pk.x),Y=sy(pk.y);rect(X-6,Y-6,12,12,pk.type==='heal'?'#74df7d':'#71d4ff');}
+    for(const b of snap.bullets||[]){const X=sx(b.x),Y=sy(b.y);if(X>-10&&X<W+10&&Y>-10&&Y<H+10)rect(X-3,Y-3,6,6,b.team==='p'?'#ffd65c':'#ff6767');}
   }
+
+  for(const s of smoothPlayers.values()){
+    if(s.data&&s.data.id===myId){
+      const dx=(keys.KeyD?1:0)-(keys.KeyA?1:0),dy=(keys.KeyS?1:0)-(keys.KeyW?1:0),l=Math.hypot(dx,dy)||1;
+      if(localDraw.ready){
+        const sp=zone==='lobby'?(keys.Space?330:180):(keys.Space?460:205);
+        if(dx||dy){localDraw.x+=dx/l*sp*dt;localDraw.y+=dy/l*sp*dt;}
+        const world=snap.world||{w:W,h:H};
+        localDraw.x=Math.max(32,Math.min(world.w-32,localDraw.x));localDraw.y=Math.max(32,Math.min(world.h-32,localDraw.y));
+        const reconcile=1-Math.exp(-8*dt);
+        localDraw.x=lerp(localDraw.x,s.tx??localDraw.x,reconcile);localDraw.y=lerp(localDraw.y,s.ty??localDraw.y,reconcile);
+        drawPlayer(s.data,true,localDraw.x,localDraw.y);
+      }
+    }else{
+      s.x=lerp(s.x,s.tx??s.x,playerBlend);s.y=lerp(s.y,s.ty??s.y,playerBlend);
+      if(s.data)drawPlayer(s.data,false,s.x,s.y);
+    }
+  }
+
+  const p=me();
+  hud.innerHTML=p?
+    'Профиль: '+esc(p.nick)+'<br>Уровень: '+profile.level+' ('+Math.floor(profile.xp)+'/'+threshold(profile.level)+' XP)<br>Убийства: '+profile.kills+' · Монеты: '+profile.coins+
+    (zone==='dungeon'?'<br>Волна: '+snap.wave+' · HP '+Math.ceil(p.hp)+'/100 · Патроны '+p.ammo+'/8':'<br><span style="color:#e0b449">Идите к двери справа →</span>'):
+    '';
 }
-function loop(t){
-  const dt=Math.min(.033,(t-last)/1000);last=t;fireCd=Math.max(0,fireCd-dt);draw(dt);requestAnimationFrame(loop);
-}
+function loop(t){const dt=Math.min(.033,(t-last)/1000);last=t;fireCd=Math.max(0,fireCd-dt);draw(dt);requestAnimationFrame(loop)}
 requestAnimationFrame(loop);
 </script></body></html>
