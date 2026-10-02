@@ -60,7 +60,7 @@ const SKIN_TABLE={x:420,y:235,w:120,h:70},WEAPON_TABLE={x:610,y:235,w:140,h:70};
 const skinImgs={};for(const s of SKINS){const im=new Image();im.src='/'+s;skinImgs[s]=im;}
 
 const keys={},mouse={x:W/2,y:H/2,down:false};
-let ws=null,myId=null,joined=false,zone='lobby',choiceOpen=false,skinOpen=false,weaponOpen=false;
+let ws=null,stateWs=null,stateToken='',stateReconnectTimer=null,myId=null,joined=false,zone='lobby',choiceOpen=false,skinOpen=false,weaponOpen=false;
 let profile={level:1,xp:0,kills:0,coins:0,bestWave:1,skin:'mech_01.png',weapon:'auto'};
 let pendingSkin='mech_01.png',pendingWeapon='auto',wave=1,checkpoint=false;
 let localDraw={x:150,y:270,ready:false},localServer=null,camera={x:0,y:0};
@@ -68,7 +68,7 @@ let localDashCd=0,localDashTime=0,fireCd=0,runClock=0,lastFrame=performance.now(
 let pickups=[];
 const playersLatest=new Map(),remoteHist=new Map(),enemyHist=new Map(),enemyBullets=new Map();
 let fxBullets=[],fxBeams=[],fxExplosions=[];
-const net={rtt:0,jitter:0,offset:0,lastRtt:0,snapCount:0,snapHz:0,lastSnapRateAt:performance.now(),fps:60,frameCount:0,lastFpsAt:performance.now(),buffered:0};
+const net={rtt:0,jitter:0,offset:0,lastRtt:0,snapCount:0,snapHz:0,lastSnapRateAt:performance.now(),stateJitter:0,lastStateAt:0,stateConnected:false,stateAge:0,fps:60,frameCount:0,lastFpsAt:performance.now(),buffered:0};
 let lastInputSig='',lastInputAt=0;
 
 function rect(x,y,w,h,col){ctx.fillStyle=col;ctx.fillRect(Math.round(x),Math.round(y),Math.round(w),Math.round(h))}
@@ -116,7 +116,7 @@ function rebuildWeaponGrid(){
 }
 
 function decodePlayer(a){
-  return {id:a[0],nick:a[1],x:a[2],y:a[3],hp:a[4],alive:!!a[5],ammo:a[6],reload:a[7],level:a[8],skin:SKINS[a[9]]||SKINS[0],weapon:WEAPON_IDS[a[10]]||'auto',mag:a[11],moving:!!a[12],facing:a[13]||1,vx:a[14]||0,vy:a[15]||0};
+  return {id:a[0],nick:a[1],x:a[2],y:a[3],hp:a[4],alive:!!a[5],ammo:a[6],reload:(a[7]||0)/100,level:a[8],skin:SKINS[a[9]]||SKINS[0],weapon:WEAPON_IDS[a[10]]||'auto',mag:a[11],moving:!!a[12],facing:a[13]||1,vx:a[14]||0,vy:a[15]||0};
 }
 function decodeEnemy(a){return {id:a[0],x:a[1],y:a[2],hp:a[3],maxHp:a[4],type:a[5]?'shooter':'melee',vx:a[6]||0,vy:a[7]||0}}
 function pushHistory(map,id,st,data){
@@ -140,13 +140,15 @@ function sampleHistory(entry,t){
   out.x=last.d.x+last.d.vx*dt;out.y=last.d.y+last.d.vy*dt;out.data=last.d;return out;
 }
 function projectedServerNow(){return Date.now()+net.offset}
-function interpDelay(){return clamp(85+net.jitter*1.6,85,155)}
+function interpDelay(){return clamp(110+net.stateJitter*2.2,110,240)}
 
 function clearWorldInterpolation(){
   remoteHist.clear();enemyHist.clear();enemyBullets.clear();fxBullets=[];fxBeams=[];fxExplosions=[];
 }
 function handleSnapshot(m){
-  net.snapCount++;
+  const arrived=performance.now();
+  if(net.lastStateAt){const gap=arrived-net.lastStateAt;net.stateJitter=net.stateJitter*.84+Math.abs(gap-80)*.16;}
+  net.lastStateAt=arrived;net.stateConnected=true;net.stateAge=0;net.snapCount++;
   zone=m.z===0?'lobby':'dungeon';wave=m.v||wave;
   checkpoint=!!m.c;
   const st=Number(m.st)||Date.now();
@@ -180,11 +182,30 @@ function handleSnapshot(m){
   }
 }
 
+function openStateSocket(){
+  if(!joined||!stateToken||!ws||ws.readyState!==1)return;
+  if(stateWs&&(stateWs.readyState===0||stateWs.readyState===1))return;
+  const base=(location.protocol==='https:'?'wss://':'ws://')+location.host;
+  stateWs=new WebSocket(base+'/state?token='+encodeURIComponent(stateToken));
+  stateWs.onopen=()=>{net.stateConnected=true;net.lastStateAt=performance.now();};
+  stateWs.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}if(m.t==='s')handleSnapshot(m);};
+  stateWs.onerror=()=>{};
+  stateWs.onclose=()=>{
+    net.stateConnected=false;
+    if(joined&&stateToken){
+      clearTimeout(stateReconnectTimer);
+      stateReconnectTimer=setTimeout(openStateSocket,700);
+    }
+  };
+}
 function connect(){
   ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host);
   ws.onopen=()=>{loginStatus.textContent='Сервер подключен';lastInputSig='';lastInputAt=0};
   ws.onclose=()=>{
-    joined=false;myId=null;login.style.display='grid';loginStatus.textContent='Соединение потеряно. Переподключение...';
+    joined=false;myId=null;stateToken='';net.stateConnected=false;
+    clearTimeout(stateReconnectTimer);
+    if(stateWs){try{stateWs.close()}catch{}stateWs=null;}
+    login.style.display='grid';loginStatus.textContent='Соединение потеряно. Переподключение...';
     setTimeout(connect,900);
   };
   ws.onerror=()=>{};
@@ -201,8 +222,8 @@ function connect(){
       return;
     }
     if(m.type==='joined'){
-      myId=m.id;joined=true;profile=m.profile||profile;pendingSkin=profile.skin||SKINS[0];pendingWeapon=profile.weapon||'auto';
-      net.offset=(m.serverTime||Date.now())-Date.now();saveProfile();login.style.display='none';note('Добро пожаловать');
+      myId=m.id;joined=true;stateToken=m.stateToken||'';profile=m.profile||profile;pendingSkin=profile.skin||SKINS[0];pendingWeapon=profile.weapon||'auto';
+      net.offset=(m.serverTime||Date.now())-Date.now();saveProfile();login.style.display='none';openStateSocket();note('Добро пожаловать');
       return;
     }
     if(m.type==='profile_update'){profile=m.profile||profile;saveProfile();return}
@@ -236,6 +257,7 @@ connect();
 setInterval(()=>{if(joined)netSend({type:'ping',clientTime:Date.now()},true)},1000);
 setInterval(()=>{
   const now=performance.now(),dt=(now-net.lastSnapRateAt)/1000;
+  if(net.lastStateAt)net.stateAge=now-net.lastStateAt;
   if(dt>=1){net.snapHz=net.snapCount/dt;net.snapCount=0;net.lastSnapRateAt=now}
 },250);
 
@@ -332,12 +354,23 @@ function updateLocal(dt){
   localDraw.x=clamp(localDraw.x,32,world.w-32);localDraw.y=clamp(localDraw.y,32,world.h-32);
 
   if(localServer){
-    const age=clamp((projectedServerNow()-localServer.st)/1000,0,.2);
-    const tx=localServer.x+localServer.vx*age,ty=localServer.y+localServer.vy*age;
+    const snapshotAge=clamp((projectedServerNow()-localServer.st)/1000,0,.35);
+    const moving=Math.abs(i.dx)+Math.abs(i.dy)>.01;
+    const oneWay=clamp(net.rtt/2000,0,.45);
+    const predictAge=clamp(snapshotAge+oneWay*.45,0,.45);
+    const tx=localServer.x+(moving?i.dx*speed:localServer.vx)*predictAge;
+    const ty=localServer.y+(moving?i.dy*speed:localServer.vy)*predictAge;
     const err=Math.hypot(tx-localDraw.x,ty-localDraw.y);
-    if(err>150){localDraw.x=tx;localDraw.y=ty}
-    else if(err>12){
-      const k=1-Math.exp(-2.4*dt);
+    // Under high RTT the authoritative player is naturally behind the local prediction.
+    // Never "rubber-band" the camera for that expected gap; correct only genuine divergence.
+    const allowance=70+speed*Math.min(net.rtt,900)/1000*.65+net.jitter*.35;
+    if(err>Math.max(420,allowance*2.4)){
+      localDraw.x=tx;localDraw.y=ty;
+    }else if(!moving&&err>28){
+      const k=1-Math.exp(-1.5*dt);
+      localDraw.x=lerp(localDraw.x,tx,k);localDraw.y=lerp(localDraw.y,ty,k);
+    }else if(moving&&err>allowance){
+      const k=1-Math.exp(-.55*dt);
       localDraw.x=lerp(localDraw.x,tx,k);localDraw.y=lerp(localDraw.y,ty,k);
     }
   }
@@ -438,13 +471,15 @@ function drawWorld(dt){
 }
 function updateHud(){
   const p=me();if(!p){hud.innerHTML='';return}
-  const ping=Math.round(net.rtt),jit=Math.round(net.jitter),cls=ping<80&&jit<20?'netGood':ping<150&&jit<45?'netWarn':'netBad';
+  const ping=Math.round(net.rtt),jit=Math.round(net.jitter),stateJit=Math.round(net.stateJitter),stateAge=Math.round(net.stateAge);
+  const cls=ping<100&&jit<30?'netGood':ping<180&&jit<60?'netWarn':'netBad';
+  const stateCls=net.stateConnected&&stateAge<250?'netGood':stateAge<600?'netWarn':'netBad';
   const w=WEAPON_INFO[p.weapon||profile.weapon]||WEAPON_INFO.auto;
   let extra=zone==='dungeon'
     ?'<br>Волна: '+wave+' · HP '+Math.ceil(p.hp)+'/100 · '+w.name+' · Патроны '+p.ammo+'/'+p.mag+(checkpoint?'<br><span style="color:#e0b449">Открылась дверь выхода</span>':'')
     :'<br><span style="color:#e0b449">Идите к двери справа →</span>'+(nearSkinTable(p)?'<br><span style="color:#8bd6ff">E — выбрать меха</span>':'')+(nearWeaponTable(p)?'<br><span style="color:#9eeaff">E — выбрать оружие</span>':'');
   hud.innerHTML='Профиль: '+esc(p.nick)+'<br>Уровень: '+profile.level+' ('+Math.floor(profile.xp)+'/'+xpThreshold(profile.level)+' XP)<br>Убийства: '+profile.kills+' · Монеты: '+profile.coins+
-    extra+'<br><span class="'+cls+'">Ping '+ping+' ms · Jitter '+jit+' ms</span> · '+Math.round(net.snapHz)+' snap/s · '+Math.round(net.fps)+' FPS';
+    extra+'<br><span class="'+cls+'">CTRL '+ping+' ms · Jitter '+jit+' ms</span> · <span class="'+stateCls+'">STATE '+stateAge+' ms · J '+stateJit+' ms</span><br>'+Math.round(net.snapHz)+' state/s · '+Math.round(net.fps)+' FPS';
 }
 function loop(t){
   const dt=Math.min(.033,(t-lastFrame)/1000);lastFrame=t;runClock+=dt;fireCd=Math.max(0,fireCd-dt);
