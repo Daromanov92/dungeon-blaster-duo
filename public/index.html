@@ -16,12 +16,15 @@ button{margin-top:10px;border:0;background:#e0b449;color:#1a160d;font-weight:800
 .status{margin-top:14px;color:#d0d0da;min-height:22px}
 #toast{position:fixed;left:50%;top:16px;transform:translateX(-50%);background:#22242d;border:1px solid #444956;padding:8px 14px;border-radius:9px;display:none;z-index:20}
 #choice{position:fixed;inset:0;background:rgba(8,8,12,.72);display:none;place-items:center;z-index:15}
+#skinModal{position:fixed;inset:0;background:rgba(8,8,12,.76);display:none;place-items:center;z-index:16}
 .choiceButtons{display:grid;grid-template-columns:1fr 1fr;gap:10px}.choiceButtons button{margin-top:0}.secondary{background:#353541;color:#fff}
+.skinGrid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:14px}.skinBtn{height:92px;background:#111118;border:1px solid #3b3b48;border-radius:10px;padding:6px;cursor:pointer}.skinBtn.selected{outline:2px solid #e0b449}.skinBtn img{width:58px;height:68px;object-fit:contain;image-rendering:pixelated}
 </style></head><body>
 <canvas id="game" width="960" height="540"></canvas>
 <div id="hud"></div><div id="help">WASD — движение<br>ЛКМ — стрелять<br>R — перезарядка<br>Space — рывок</div><div id="toast"></div>
 
 <div id="choice"><div class="card"><h1>Три волны пройдены</h1><div class="sub">Вернуться в хаб или продолжить следующие 3 волны?</div><div class="choiceButtons"><button id="hubBtn" class="secondary">ВЕРНУТЬСЯ В ХАБ</button><button id="continueBtn">ПРОДОЛЖИТЬ</button></div></div></div>
+<div id="skinModal"><div class="card" style="width:min(720px,94vw)"><h1>Выбор меха</h1><div class="sub">Выберите внешний вид. Он сохранится в профиле этого ника.</div><div id="skinGrid" class="skinGrid"></div><button id="closeSkin" class="secondary">ЗАКРЫТЬ</button></div></div>
 
 <div id="login"><div class="card">
 <h1>Dungeon Blaster</h1>
@@ -35,10 +38,14 @@ button{margin-top:10px;border:0;background:#e0b449;color:#1a160d;font-weight:800
 const c=document.getElementById('game'),ctx=c.getContext('2d'),hud=document.getElementById('hud');
 const login=document.getElementById('login'),nick=document.getElementById('nick'),play=document.getElementById('play'),loginStatus=document.getElementById('loginStatus'),toast=document.getElementById('toast');
 const choice=document.getElementById('choice'),hubBtn=document.getElementById('hubBtn'),continueBtn=document.getElementById('continueBtn');
+const skinModal=document.getElementById('skinModal'),skinGrid=document.getElementById('skinGrid'),closeSkin=document.getElementById('closeSkin');
 ctx.imageSmoothingEnabled=false;
 
 const W=960,H=540,keys={},mouse={x:W/2,y:H/2,down:false};
-let ws,myId=null,joined=false,zone='lobby',fireCd=0,last=performance.now(),choiceOpen=false,profile={level:1,xp:0,kills:0,coins:0,bestWave:1};
+const SKINS=['mech_01.png','mech_02.png','mech_03.png','mech_04.png','mech_05.png','mech_06.png','mech_07.png','mech_08.png','mech_09.png','mech_10.png'];
+const skinImgs={};for(const s of SKINS){const im=new Image();im.src='/'+s;skinImgs[s]=im;}
+const SKIN_TABLE={x:420,y:235,w:120,h:70};
+let ws,myId=null,joined=false,zone='lobby',fireCd=0,last=performance.now(),choiceOpen=false,skinOpen=false,profile={level:1,xp:0,kills:0,coins:0,bestWave:1,skin:'mech_01.png'};
 let snap={players:[],enemies:[],bullets:[],pickups:[],wave:1,world:{w:960,h:540}};
 const smoothPlayers=new Map(),smoothEnemies=new Map();
 let localDraw={x:150,y:270,ready:false};
@@ -54,15 +61,17 @@ function keyFor(n){return 'dungeon_blaster_profile_'+n.trim().toLowerCase();}
 function loadProfile(n){
   try{
     const raw=localStorage.getItem(keyFor(n));
-    if(raw)return Object.assign({level:1,xp:0,kills:0,coins:0,bestWave:1},JSON.parse(raw));
+    if(raw)return Object.assign({level:1,xp:0,kills:0,coins:0,bestWave:1,skin:'mech_01.png'},JSON.parse(raw));
   }catch{}
-  return {level:1,xp:0,kills:0,coins:0,bestWave:1};
+  return {level:1,xp:0,kills:0,coins:0,bestWave:1,skin:'mech_01.png'};
 }
 function saveProfile(){
   const n=nick.value.trim();if(!n)return;
   try{localStorage.setItem(keyFor(n),JSON.stringify(profile));}catch{}
 }
 function threshold(l){return 100+Math.max(0,l-1)*75;}
+function nearSkinTable(p){if(!p||zone!=='lobby')return false;const cx=SKIN_TABLE.x+SKIN_TABLE.w/2,cy=SKIN_TABLE.y+SKIN_TABLE.h/2;return Math.hypot(p.x-cx,p.y-cy)<95;}
+function rebuildSkinGrid(){skinGrid.innerHTML='';for(const s of SKINS){const b=document.createElement('button');b.className='skinBtn'+(profile.skin===s?' selected':'');const im=document.createElement('img');im.src='/'+s;im.alt=s;b.appendChild(im);b.onclick=()=>{profile.skin=s;saveProfile();if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'set_skin',skin:s}));skinOpen=false;skinModal.style.display='none';rebuildSkinGrid();};skinGrid.appendChild(b);}}
 
 function connect(){
   ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host);
@@ -76,7 +85,7 @@ function connect(){
     if(m.type==='joined'){
       myId=m.id;joined=true;profile=m.profile||profile;saveProfile();login.style.display='none';note('Добро пожаловать');
     }
-    if(m.type==='profile_update'){profile=m.profile;saveProfile();}
+    if(m.type==='profile_update'){profile=m.profile;saveProfile();rebuildSkinGrid();}
     if(m.type==='entered_dungeon'){zone='dungeon';localDraw.ready=false;smoothPlayers.clear();smoothEnemies.clear();note('Вы вошли в данж');}
     if(m.type==='back_to_hub'){zone='lobby';choiceOpen=false;choice.style.display='none';localDraw.ready=false;smoothPlayers.clear();smoothEnemies.clear();note('Вы вернулись в хаб');}
     if(m.type==='checkpoint_ready')note('3 волны пройдены — появилась дверь');
@@ -110,11 +119,15 @@ play.onclick=()=>{
   ws.send(JSON.stringify({type:'join',nick:n,profile}));
 };
 nick.addEventListener('keydown',e=>{if(e.key==='Enter')play.click()});
+rebuildSkinGrid();
+closeSkin.onclick=()=>{skinOpen=false;skinModal.style.display='none';};
 hubBtn.onclick=()=>{if(ws&&ws.readyState===1){ws.send(JSON.stringify({type:'checkpoint_action',action:'hub'}));choiceOpen=false;choice.style.display='none';}};
 continueBtn.onclick=()=>{if(ws&&ws.readyState===1){ws.send(JSON.stringify({type:'checkpoint_action',action:'continue'}));choiceOpen=false;choice.style.display='none';}};
 
 addEventListener('keydown',e=>{
   keys[e.code]=true;
+  if(e.code==='KeyE'&&zone==='lobby'&&!skinOpen){const p=me();if(nearSkinTable(p)){skinOpen=true;skinModal.style.display='grid';rebuildSkinGrid();}}
+  if(e.code==='Escape'&&skinOpen){skinOpen=false;skinModal.style.display='none';}
   if(e.code==='KeyR'&&zone==='dungeon'&&ws&&ws.readyState===1)ws.send(JSON.stringify({type:'reload'}));
 });
 addEventListener('keyup',e=>keys[e.code]=false);
@@ -123,8 +136,9 @@ c.addEventListener('mousedown',()=>mouse.down=true);addEventListener('mouseup',(
 
 setInterval(()=>{
   if(!joined||!ws||ws.readyState!==1)return;
-  const dx=choiceOpen?0:(keys.KeyD?1:0)-(keys.KeyA?1:0),dy=choiceOpen?0:(keys.KeyS?1:0)-(keys.KeyW?1:0);
-  ws.send(JSON.stringify({type:'input',dx,dy,dash:choiceOpen?false:!!keys.Space}));
+  const blocked=choiceOpen||skinOpen;
+  const dx=blocked?0:(keys.KeyD?1:0)-(keys.KeyA?1:0),dy=blocked?0:(keys.KeyS?1:0)-(keys.KeyW?1:0);
+  ws.send(JSON.stringify({type:'input',dx,dy,dash:blocked?false:!!keys.Space}));
 },16);
 
 setInterval(()=>{
@@ -137,11 +151,10 @@ setInterval(()=>{
 
 function sx(x){return x-camera.x}function sy(y){return y-camera.y}
 function drawPlayer(p,isMe,x,y){
-  const X=sx(x),Y=sy(y),col=isMe?'#eeeef3':'#63c9ff';
-  rect(X-11,Y-11,22,22,col);rect(X-8,Y-8,16,5,'#fff');
-  rect(X-4,Y-1,3,5,'#202028');rect(X+3,Y-1,3,5,'#202028');
-  ctx.fillStyle='#fff';ctx.font='12px Arial';ctx.textAlign='center';ctx.fillText(p.nick+'  Lv.'+p.level,X,Y-18);
-  rect(X-14,Y+16,28,3,'#472327');rect(X-14,Y+16,28*(p.hp/100),3,'#62d26f');
+  const X=sx(x),Y=sy(y),skin=p.skin||'mech_01.png',img=skinImgs[skin];
+  if(img&&img.complete&&img.naturalWidth){ctx.drawImage(img,Math.round(X-24),Math.round(Y-31),48,58);}else{const col=isMe?'#eeeef3':'#63c9ff';rect(X-11,Y-11,22,22,col);}
+  ctx.fillStyle='#fff';ctx.font='12px Arial';ctx.textAlign='center';ctx.fillText(p.nick+'  Lv.'+p.level,X,Y-38);
+  rect(X-14,Y+30,28,3,'#472327');rect(X-14,Y+30,28*(p.hp/100),3,'#62d26f');
 }
 function updateCamera(dt){
   const p=me();if(!p)return;
@@ -156,6 +169,9 @@ function drawLobby(){
   rect(0,0,W,28,'#4a4a56');rect(0,H-28,W,28,'#4a4a56');rect(0,0,28,H,'#4a4a56');rect(W-28,0,28,H,'#4a4a56');
   rect(90,120,250,300,'#24242d');rect(104,135,222,270,'#2d2d36');
   ctx.fillStyle='#aaa';ctx.font='14px Arial';ctx.textAlign='center';ctx.fillText('СТАРТОВАЯ КОМНАТА',215,110);
+  rect(SKIN_TABLE.x,SKIN_TABLE.y,SKIN_TABLE.w,SKIN_TABLE.h,'#5a3924');rect(SKIN_TABLE.x+8,SKIN_TABLE.y+8,SKIN_TABLE.w-16,SKIN_TABLE.h-16,'#7a5130');
+  rect(SKIN_TABLE.x+12,SKIN_TABLE.y+SKIN_TABLE.h,12,26,'#392517');rect(SKIN_TABLE.x+SKIN_TABLE.w-24,SKIN_TABLE.y+SKIN_TABLE.h,12,26,'#392517');
+  ctx.fillStyle='#f0d39a';ctx.font='12px Arial';ctx.fillText('МЕХИ',SKIN_TABLE.x+SKIN_TABLE.w/2,SKIN_TABLE.y-10);
   const d=snap.door||{x:865,y:190,w:55,h:160};
   rect(d.x,d.y,d.w,d.h,'#2a1719');rect(d.x+8,d.y+10,d.w-16,d.h-20,'#7b4231');
   rect(d.x+20,d.y+16,7,d.h-32,'#d0a65b');
@@ -215,7 +231,7 @@ function draw(dt){
   const p=me();
   hud.innerHTML=p?
     'Профиль: '+esc(p.nick)+'<br>Уровень: '+profile.level+' ('+Math.floor(profile.xp)+'/'+threshold(profile.level)+' XP)<br>Убийства: '+profile.kills+' · Монеты: '+profile.coins+
-    (zone==='dungeon'?'<br>Волна: '+snap.wave+' · HP '+Math.ceil(p.hp)+'/100 · Патроны '+p.ammo+'/8'+(snap.checkpoint?'<br><span style="color:#e0b449">Открылась дверь выхода</span>':''):'<br><span style="color:#e0b449">Идите к двери справа →</span>'):
+    (zone==='dungeon'?'<br>Волна: '+snap.wave+' · HP '+Math.ceil(p.hp)+'/100 · Патроны '+p.ammo+'/8'+(snap.checkpoint?'<br><span style="color:#e0b449">Открылась дверь выхода</span>':''):'<br><span style="color:#e0b449">Идите к двери справа →</span>'+(nearSkinTable(p)?'<br><span style="color:#8bd6ff">E — выбрать меха</span>':'')):
     '';
 }
 function loop(t){const dt=Math.min(.033,(t-last)/1000);last=t;fireCd=Math.max(0,fireCd-dt);draw(dt);requestAnimationFrame(loop)}
