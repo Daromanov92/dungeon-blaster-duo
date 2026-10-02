@@ -85,7 +85,10 @@ function connect(){
     if(m.type==='joined'){
       myId=m.id;joined=true;profile=m.profile||profile;pendingSkin=profile.skin||'mech_01.png';saveProfile();login.style.display='none';note('Добро пожаловать');
     }
-    if(m.type==='profile_update'){profile=m.profile;pendingSkin=profile.skin||pendingSkin;saveProfile();rebuildSkinGrid();}
+    if(m.type==='profile_update'){profile=m.profile;saveProfile();}
+    if(m.type==='skin_applied'){profile.skin=m.skin;pendingSkin=m.skin;saveProfile();const local=me();if(local)local.skin=m.skin;const sm=smoothPlayers.get(myId);if(sm&&sm.data)sm.data.skin=m.skin;rebuildSkinGrid();skinOpen=false;skinModal.style.display='none';applySkin.disabled=false;applySkin.textContent='ПРИМЕНИТЬ СКИН';note('Скин применён');}
+    if(m.type==='skin_changed'){const sp=snap.players.find(x=>x.id===m.id);if(sp)sp.skin=m.skin;const sm=smoothPlayers.get(m.id);if(sm&&sm.data)sm.data.skin=m.skin;}
+    if(m.type==='skin_error'){note('Ошибка применения скина');}
     if(m.type==='entered_dungeon'){zone='dungeon';localDraw.ready=false;smoothPlayers.clear();smoothEnemies.clear();note('Вы вошли в данж');}
     if(m.type==='back_to_hub'){zone='lobby';choiceOpen=false;choice.style.display='none';localDraw.ready=false;smoothPlayers.clear();smoothEnemies.clear();note('Вы вернулись в хаб');}
     if(m.type==='checkpoint_ready')note('3 волны пройдены — появилась дверь');
@@ -122,11 +125,10 @@ nick.addEventListener('keydown',e=>{if(e.key==='Enter')play.click()});
 rebuildSkinGrid();
 applySkin.onclick=()=>{
   if(!SKINS.includes(pendingSkin))return;
-  profile.skin=pendingSkin;saveProfile();
-  const local=me();if(local)local.skin=pendingSkin;
-  const sm=smoothPlayers.get(myId);if(sm&&sm.data)sm.data.skin=pendingSkin;
-  if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'set_skin',skin:pendingSkin}));
-  note('Скин применён');skinOpen=false;skinModal.style.display='none';
+  if(!ws||ws.readyState!==1){note('Нет соединения с сервером');return;}
+  applySkin.disabled=true;applySkin.textContent='ПРИМЕНЯЮ...';
+  ws.send(JSON.stringify({type:'set_skin',skin:pendingSkin}));
+  setTimeout(()=>{applySkin.disabled=false;applySkin.textContent='ПРИМЕНИТЬ СКИН';},700);
 };
 closeSkin.onclick=()=>{pendingSkin=profile.skin||'mech_01.png';skinOpen=false;skinModal.style.display='none';rebuildSkinGrid();};
 hubBtn.onclick=()=>{if(ws&&ws.readyState===1){ws.send(JSON.stringify({type:'checkpoint_action',action:'hub'}));choiceOpen=false;choice.style.display='none';}};
